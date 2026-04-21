@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DB 메타 쿼리 생성기</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <link rel="stylesheet" href="css/styles.css?v=14">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ────────── SIDEBAR ────────── -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">DB 메타 쿼리 생성기</div>
+      <div class="brand-sub">meta_query_gen / v1.3.11</div>
+      <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기" aria-label="메뉴 접기">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+    </div>
+
+    <div class="nav-section">작업</div>
+    <button class="nav-btn active" data-target="tbl-tab" title="테이블 신규 생성 (Alt+1)">
+      <span class="nav-idx">01</span>
+      <span>테이블 신규 생성</span>
+    </button>
+    <button class="nav-btn" data-target="col-tab" title="컬럼 추가·변경·삭제 (Alt+2)">
+      <span class="nav-idx">02</span>
+      <span>컬럼 추가·변경·삭제</span>
+    </button>
+    <button class="nav-btn" data-target="idx-tab" title="인덱스 생성·삭제 (Alt+3)">
+      <span class="nav-idx">03</span>
+      <span>인덱스 생성·삭제</span>
+    </button>
+    <button class="nav-btn" data-target="seq-tab" title="시퀀스 생성·변경·삭제 (Alt+4)">
+      <span class="nav-idx">04</span>
+      <span>시퀀스 생성·변경·삭제</span>
+    </button>
+
+    <div class="sidebar-footer">
+      <div class="session-row">
+        <span class="session-dot" id="emp-dot"></span>
+        <span class="session-label">담당자 사번</span>
+        <input type="text" id="global-emp-id" placeholder="0000000" maxlength="10">
+      </div>
+    </div>
+  </aside>
+
+  <!-- ────────── MAIN ────────── -->
+  <main class="main">
+
+    <!-- Top bar: title + reason + actions -->
+    <div class="topbar">
+      <h2 id="current-title">테이블 신규 생성</h2>
+      <span class="subtitle" id="current-subtitle">CREATE TABLE · META INSERT · HIST</span>
+
+      <div class="reason-bar" id="reason-bar">
+        <label for="change-reason">변경 사유 <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="change-reason" placeholder="예: 신규 회원서비스 런칭을 위한 TB_MEMBER 테이블 신설">
+      </div>
+
+      <div class="topbar-right">
+        <button class="icon-btn" id="toggle-theme" title="다크 모드 토글">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        </button>
+        <button class="icon-btn" id="toggle-tweaks" title="Tweaks">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Workspace: split input + output -->
+    <div class="workspace">
+
+      <!-- INPUT PANE -->
+      <div class="pane pane-input">
+        <div class="pane-body">
+
+          <div class="validation-modal" id="validation" role="dialog" aria-modal="true" aria-labelledby="validation-title">
+            <div class="validation-backdrop" data-close="1"></div>
+            <div class="validation-dialog">
+              <div class="validation-head">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <b id="validation-title">입력을 확인하세요</b>
+                <button type="button" class="validation-close" data-close="1" aria-label="닫기">&times;</button>
+              </div>
+              <div class="validation-body" id="validation-body"></div>
+              <div class="validation-foot">
+                <button type="button" class="btn btn-primary" data-close="1">확인</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ═════ TAB 1: TABLE ═════ -->
+          <section class="tab-panel active" id="tbl-tab">
+            <form id="tbl-meta-form" onsubmit="return false">
+
+              <div class="section" data-section>
+                <div class="section-head" data-toggle>
+                  <div class="section-title"><span class="step">1</span>기본 정보</div>
+                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="section-body" id="tbl-sec-basic"></div>
+              </div>
+
+              <div class="section" data-section>
+                <div class="section-head" data-toggle>
+                  <div class="section-title"><span class="step">2</span>소유·보안·격리</div>
+                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="section-body" id="tbl-sec-owner"></div>
+              </div>
+
+              <div class="section" data-section>
+                <div class="section-head" data-toggle>
+                  <div class="section-title"><span class="step">3</span>보관·약관</div>
+                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="section-body" id="tbl-sec-retention"></div>
+              </div>
+
+              <div class="section" data-section>
+                <div class="section-head" data-toggle>
+                  <div class="section-title"><span class="step">4</span>뷰·테이블스페이스·비고</div>
+                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="section-body" id="tbl-sec-view"></div>
+              </div>
+
+              <div class="section" data-section>
+                <div class="section-head" data-toggle>
+                  <div class="section-title"><span class="step">5</span>컬럼 정의 <span class="hint" id="tbl-col-count">· 0개</span></div>
+                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="section-body" id="tbl-col-body"></div>
+              </div>
+            </form>
+          </section>
+
+          <!-- ═════ TAB 2: COLUMN ═════ -->
+          <section class="tab-panel" id="col-tab">
+            <div class="subtabs">
+              <button class="subtab-btn active" data-target="col-add"><span class="op-badge">ADD</span>추가</button>
+              <button class="subtab-btn" data-target="col-mod" data-op="MODIFY"><span class="op-badge">MOD</span>변경</button>
+              <button class="subtab-btn" data-target="col-drop" data-op="DROP"><span class="op-badge">DROP</span>삭제</button>
+            </div>
+
+            <div class="subtab-panel active" id="col-add">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">대상 테이블</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="col-add-target"></div></div>
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">추가할 컬럼</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="col-add-body"></div></div>
+            </div>
+
+            <div class="subtab-panel" id="col-mod">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">대상 테이블 / 컬럼</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="col-mod-target"></div></div>
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">변경 후 메타</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="col-mod-body"></div></div>
+            </div>
+
+            <div class="subtab-panel" id="col-drop">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">삭제 대상</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="col-drop-body"></div></div>
+            </div>
+          </section>
+
+          <!-- ═════ TAB 3: INDEX ═════ -->
+          <section class="tab-panel" id="idx-tab">
+            <div class="subtabs">
+              <button class="subtab-btn active" data-target="idx-create"><span class="op-badge">CREATE</span>생성</button>
+              <button class="subtab-btn" data-target="idx-drop" data-op="DROP"><span class="op-badge">DROP</span>삭제</button>
+            </div>
+
+            <div class="subtab-panel active" id="idx-create">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">인덱스 기본 정보</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="idx-create-body"></div></div>
+            </div>
+
+            <div class="subtab-panel" id="idx-drop">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">삭제 대상</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="idx-drop-body"></div></div>
+            </div>
+          </section>
+
+          <!-- ═════ TAB 4: SEQUENCE ═════ -->
+          <section class="tab-panel" id="seq-tab">
+            <div class="subtabs">
+              <button class="subtab-btn active" data-target="seq-create"><span class="op-badge">CREATE</span>생성</button>
+              <button class="subtab-btn" data-target="seq-alter" data-op="ALTER"><span class="op-badge">ALT</span>변경</button>
+              <button class="subtab-btn" data-target="seq-drop" data-op="DROP"><span class="op-badge">DROP</span>삭제</button>
+            </div>
+
+            <div class="subtab-panel active" id="seq-create">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">시퀀스 생성</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="seq-create-body"></div></div>
+            </div>
+
+            <div class="subtab-panel" id="seq-alter">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">시퀀스 변경</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="seq-alter-body"></div></div>
+            </div>
+
+            <div class="subtab-panel" id="seq-drop">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">삭제 대상</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="seq-drop-body"></div></div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- Sticky action bar -->
+        <div class="action-bar">
+          <div class="live-status" id="live-status">
+            <span class="live-dot"></span>
+            <span id="live-text">입력 대기</span>
+          </div>
+          <div class="spacer"></div>
+          <button class="btn btn-danger btn-sm" id="act-clear">초기화</button>
+          <button class="btn btn-sm" id="act-copy">결과 복사</button>
+          <button class="btn btn-primary" id="act-generate">
+            SQL 생성
+            <span class="btn-kbd">⌘↵</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- OUTPUT PANE -->
+      <div class="pane pane-output">
+        <div class="output-head">
+          <h3><span class="dot" id="out-dot" style="background:#5b6b85"></span><span class="oh-title">생성된 SQL</span></h3>
+          <span class="meta" id="out-meta">—</span>
+          <div class="spacer"></div>
+          <button class="btn btn-sm btn-icon" id="out-copy-all" title="전체 복사" aria-label="전체 복사">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+          <button class="btn btn-ghost btn-sm btn-icon" id="out-download" title=".sql 파일 저장" aria-label=".sql 저장">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+          <button class="btn btn-ghost btn-sm btn-icon" id="out-expand" title="크게 보기" aria-label="크게 보기">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+          </button>
+        </div>
+        <div class="output-scroll" id="out-scroll">
+          <div class="output-empty" id="out-empty">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M3 5v6c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+              <path d="M3 11v6c0 1.66 4.03 3 9 3s9-1.34 9-3v-6"/>
+            </svg>
+            <div>SQL이 여기 표시됩니다</div>
+            <div class="hint">폼을 채운 뒤 <b>⌘↵</b> 또는 <b>SQL 생성</b> 버튼을 누르면<br>DDL · 메타 DML · HIST INSERT가 순서대로 출력됩니다.</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<!-- SQL fullscreen modal -->
+<div class="sql-modal" id="sql-modal" role="dialog" aria-modal="true" aria-labelledby="sql-modal-title">
+  <div class="sql-modal-backdrop" data-close="1"></div>
+  <div class="sql-modal-dialog">
+    <div class="sql-modal-head">
+      <h3 id="sql-modal-title"><span class="dot" style="background:var(--success)"></span>생성된 SQL</h3>
+      <span class="meta" id="sql-modal-meta">—</span>
+      <div class="spacer"></div>
+      <button class="btn btn-sm" id="sql-modal-copy">전체 복사</button>
+      <button class="btn btn-ghost btn-sm" id="sql-modal-download">⬇ .sql 저장</button>
+      <button class="btn btn-ghost btn-sm" data-close="1" title="닫기">✕</button>
+    </div>
+    <div class="sql-modal-body" id="sql-modal-body"></div>
+  </div>
+</div>
+
+<!-- Tweaks floating panel -->
+<div class="tweaks-panel" id="tweaks-panel">
+  <h4>Tweaks</h4>
+  <div class="tweaks-row">
+    <span>테마</span>
+    <div class="seg" data-tweak="theme">
+      <button data-val="light" class="active">Light</button>
+      <button data-val="dark">Dark</button>
+    </div>
+  </div>
+  <div class="tweaks-row">
+    <span>밀도</span>
+    <div class="seg" data-tweak="density">
+      <button data-val="normal" class="active">보통</button>
+      <button data-val="compact">조밀</button>
+    </div>
+  </div>
+  <div class="tweaks-row">
+    <span>라이브 미리보기</span>
+    <div class="seg" data-tweak="live">
+      <button data-val="on" class="active">On</button>
+      <button data-val="off">Off</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "theme": "light",
+  "density": "normal",
+  "live": "on"
+}/*EDITMODE-END*/;
+</script>
+
+<!-- Core -->
+<script src="js/codes.js?v=5"></script>
+<script src="js/utils.js?v=6"></script>
+<!-- UI -->
+<script src="js/ui.js?v=7"></script>
+<script src="js/sqlview.js?v=6"></script>
+<!-- Tab modules -->
+<script src="js/table.js?v=16"></script>
+<script src="js/column.js?v=1"></script>
+<script src="js/indexMgr.js?v=1"></script>
+<script src="js/sequence.js?v=1"></script>
+<!-- App bootstrap (must load last) -->
+<script src="js/app.js?v=1"></script>
+
+</body>
+</html>
