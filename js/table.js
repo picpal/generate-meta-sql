@@ -207,7 +207,12 @@ const TableTab = (() => {
     Utils.checkName('스키마명', meta.schema, errors);
     Utils.checkName('테이블명', meta.tableName ? Utils.ensurePrefix(meta.tableName, 'TB') : '', errors);
     if (cols.length === 0) errors.push('컬럼을 1개 이상 추가하세요.');
-    cols.forEach((c, i) => Utils.checkName(`${i + 1}번 컬럼명`, c.colName, errors));
+    cols.forEach((c, i) => {
+      Utils.checkName(`${i + 1}번 컬럼명`, c.colName, errors);
+      if (c.dataType === 'NUMBER' && c.dataLength) {
+        errors.push(`${i+1}번 컬럼(${c.colName||''}): NUMBER 타입에 length 입력은 무시됩니다. precision/scale로 변경하세요.`);
+      }
+    });
     Utils.checkName('테이블스페이스', meta.tablespace, errors, false);
     if (meta.viewGenYn) Utils.checkName('뷰명', meta.viewName, errors, false);
     if (errors.length) { UI.showValidation(errors); return; }
