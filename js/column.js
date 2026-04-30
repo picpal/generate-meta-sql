@@ -151,6 +151,9 @@ const ColumnTab = (() => {
     Utils.checkName('스키마명', t.schema, errs);
     Utils.checkName('테이블명', t.tableName ? Utils.ensurePrefix(t.tableName, 'TB') : '', errs);
     Utils.checkName('컬럼명', c.colName, errs);
+    if (c.dataType === 'NUMBER' && c.dataLength) {
+      errs.push('NUMBER 타입에 length 입력은 무시됩니다. precision/scale로 변경하세요.');
+    }
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -224,6 +227,9 @@ const ColumnTab = (() => {
     Utils.checkName('스키마명', t.schema, errs);
     Utils.checkName('테이블명', t.tableName ? Utils.ensurePrefix(t.tableName, 'TB') : '', errs);
     Utils.checkName('컬럼명', c.colName, errs);
+    if (c.dataType === 'NUMBER' && c.dataLength) {
+      errs.push('NUMBER 타입에 length 입력은 무시됩니다. precision/scale로 변경하세요.');
+    }
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
