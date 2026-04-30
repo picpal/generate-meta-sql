@@ -278,9 +278,24 @@ const ColumnTab = (() => {
     } else {
       out += Utils.section(`컬럼 하드 삭제: ${schema}.${tbl}.${col}`);
       out += `-- [주의] HARD 삭제: HIST를 먼저 남기고 원본을 DROP합니다.\n`;
+
+      // 인덱스 정리 대상: 이 컬럼만으로 구성된(다른 컬럼이 없는) 인덱스
+      // → ALTER TABLE DROP COLUMN 시 Oracle이 해당 인덱스를 자동 DROP하므로 메타도 동기화.
+      const idxWhereEmptyAfter = `TABLE_ID = ${tableIdRef} AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic WHERE ic.INDEX_ID = TB_META_INDEX.INDEX_ID AND ic.COLUMN_NAME <> ${Utils.q(col)})`;
+      const idxHist = Utils.snapshotHist({ kind:'INDEX', op:'D', reason, empId:emp, whereClause: idxWhereEmptyAfter });
+      out += Utils.section('1. 인덱스 HIST INSERT (D, 컬럼 DROP 후 빈 인덱스가 될 행 스냅샷)') + idxHist + '\n';
+
+      out += Utils.section('2. TB_META_INDEX_COLUMN DELETE (해당 컬럼 매핑 제거)') + `DELETE FROM TB_META_INDEX_COLUMN
+ WHERE COLUMN_NAME = ${Utils.q(col)}
+   AND INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef});\n`;
+
+      out += Utils.section('3. TB_META_INDEX DELETE (컬럼 매핑이 모두 빠진 빈 인덱스 제거)') + `DELETE FROM TB_META_INDEX
+ WHERE TABLE_ID = ${tableIdRef}
+   AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic WHERE ic.INDEX_ID = TB_META_INDEX.INDEX_ID);\n`;
+
       const hist = Utils.snapshotHist({ kind:'COLUMN', op:'D', reason, empId:emp, whereClause: whereCol });
-      out += Utils.section('1. 컬럼 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
-      out += Utils.section('2. 물리 삭제 + 메타 DELETE') + `ALTER TABLE ${schema}.${tbl} DROP COLUMN ${col};
+      out += Utils.section('4. 컬럼 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
+      out += Utils.section('5. 물리 삭제 + 메타 DELETE') + `ALTER TABLE ${schema}.${tbl} DROP COLUMN ${col};
 
 DELETE FROM TB_META_COLUMN
  WHERE ${whereCol};
