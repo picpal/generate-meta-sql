@@ -55,7 +55,7 @@ const ColumnTab = (() => {
       { type:'check', name:'ukYn', id:`${prefix}-ukYn`, label:'UK' },
       { type:'check', name:'fkYn', id:`${prefix}-fkYn`, label:'FK' },
       { type:'check', name:'nullableYn', id:`${prefix}-nullableYn`, label:'NULL 허용' },
-      { label:'기본값', name:'defaultValue', id:`${prefix}-defaultValue` },
+      { label:'기본값', name:'defaultValue', id:`${prefix}-defaultValue`, placeholder:`'N' / 0 / SYSDATE`, hint:"(SQL 표현식 그대로 — 문자열은 작은따옴표 포함)" },
       { label:'설명', name:'description', id:`${prefix}-description`, full:true },
       { type:'check', name:'pciYn', id:`${prefix}-pci`, label:'개인신용정보', chip:'pci' },
       { label:'PCI 분류', type:'select', name:'pciCategoryCd', id:`${prefix}-pciCategoryCd`, code:'PCI_CATEGORY' },
