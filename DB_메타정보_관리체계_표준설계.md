@@ -96,7 +96,7 @@
 | 컬럼                  | 타입             | NULL | 설명                                         |
 | ------------------- | -------------- | ---- | ------------------------------------------ |
 | TABLE_ID            | NUMBER(12)     | N    | PK (SEQ_META_TABLE_ID)                     |
-| SCHEMA_NAME         | VARCHAR2(30)   | N    | 스키마명 (대문자)                                 |
+| SCHEMA_NAME         | VARCHAR2(128)   | N    | 스키마명 (대문자)                                 |
 | TABLE_NAME          | VARCHAR2(128)  | N    | 테이블명 (대문자)                                 |
 | LOGICAL_NAME        | VARCHAR2(200)  | Y    | 한글/업무명                                     |
 | DESCRIPTION         | VARCHAR2(2000) | Y    | 테이블 설명                                     |
@@ -114,9 +114,9 @@
 | TOS_CD              | VARCHAR2(20)   | Y    | 연계 이용약관 코드 (`CD_TOS`)                     |
 | STATUS_CD           | VARCHAR2(10)   | N    | `CD_STATUS`: PLANNED/ACTIVE/DEPRECATED     |
 | REMARK              | VARCHAR2(4000) | Y    | 비고                                         |
-| CREATED_BY          | VARCHAR2(20)   | N    | 생성자 사번                                     |
+| CREATED_BY          | VARCHAR2(128)   | N    | 생성자 사번                                     |
 | CREATED_AT          | TIMESTAMP      | N    | 생성일시                                       |
-| UPDATED_BY          | VARCHAR2(20)   | N    | 최종 수정자                                     |
+| UPDATED_BY          | VARCHAR2(128)   | N    | 최종 수정자                                     |
 | UPDATED_AT          | TIMESTAMP      | N    | 최종 수정일시                                    |
 
 
@@ -205,7 +205,7 @@
 | 컬럼                           | 타입            | NULL | 설명                                         |
 | ---------------------------- | ------------- | ---- | ------------------------------------------ |
 | SEQUENCE_ID                  | NUMBER(12)    | N    | PK                                         |
-| SCHEMA_NAME                  | VARCHAR2(30)  | N    | 스키마                                        |
+| SCHEMA_NAME                  | VARCHAR2(128)  | N    | 스키마                                        |
 | SEQUENCE_NAME                | VARCHAR2(128) | N    | 시퀀스명                                       |
 | MIN_VALUE                    | NUMBER        | Y    | MINVALUE                                   |
 | MAX_VALUE                    | NUMBER        | Y    | MAXVALUE                                   |
@@ -289,9 +289,9 @@ CREATE TABLE TB_META_CODE (
     DESCRIPTION   VARCHAR2(2000),
     SORT_ORDER    NUMBER(4),
     USE_YN        CHAR(1) DEFAULT 'Y' NOT NULL,
-    CREATED_BY    VARCHAR2(20)   NOT NULL,
+    CREATED_BY    VARCHAR2(128)   NOT NULL,
     CREATED_AT    TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-    UPDATED_BY    VARCHAR2(20)   NOT NULL,
+    UPDATED_BY    VARCHAR2(128)   NOT NULL,
     UPDATED_AT    TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     CONSTRAINT PK_META_CODE PRIMARY KEY (CODE_GROUP, CODE_VALUE),
     CONSTRAINT CK_META_CODE_USE CHECK (USE_YN IN ('Y','N'))
@@ -303,7 +303,7 @@ CREATE TABLE TB_META_CODE (
 ```sql
 CREATE TABLE TB_META_TABLE (
     TABLE_ID             NUMBER(12)    NOT NULL,
-    SCHEMA_NAME          VARCHAR2(30)  NOT NULL,
+    SCHEMA_NAME          VARCHAR2(128)  NOT NULL,
     TABLE_NAME           VARCHAR2(128) NOT NULL,
     LOGICAL_NAME         VARCHAR2(200),
     DESCRIPTION          VARCHAR2(2000),
@@ -321,9 +321,9 @@ CREATE TABLE TB_META_TABLE (
     TOS_CD               VARCHAR2(20),
     STATUS_CD            VARCHAR2(10)  DEFAULT 'ACTIVE' NOT NULL,
     REMARK               VARCHAR2(4000),
-    CREATED_BY           VARCHAR2(20)  NOT NULL,
+    CREATED_BY           VARCHAR2(128)  NOT NULL,
     CREATED_AT           TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-    UPDATED_BY           VARCHAR2(20)  NOT NULL,
+    UPDATED_BY           VARCHAR2(128)  NOT NULL,
     UPDATED_AT           TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     CONSTRAINT PK_META_TABLE PRIMARY KEY (TABLE_ID),
     CONSTRAINT UK_META_TABLE UNIQUE (SCHEMA_NAME, TABLE_NAME),
@@ -369,9 +369,9 @@ CREATE TABLE TB_META_COLUMN (
     TOS_CD                 VARCHAR2(20),
     STATUS_CD              VARCHAR2(10)  DEFAULT 'ACTIVE' NOT NULL,
     REMARK                 VARCHAR2(4000),
-    CREATED_BY             VARCHAR2(20)  NOT NULL,
+    CREATED_BY             VARCHAR2(128)  NOT NULL,
     CREATED_AT             TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-    UPDATED_BY             VARCHAR2(20)  NOT NULL,
+    UPDATED_BY             VARCHAR2(128)  NOT NULL,
     UPDATED_AT             TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     CONSTRAINT PK_META_COLUMN PRIMARY KEY (COLUMN_ID),
     CONSTRAINT UK_META_COLUMN UNIQUE (TABLE_ID, COLUMN_NAME),
@@ -402,9 +402,9 @@ CREATE TABLE TB_META_INDEX (
     PERFORMANCE_NOTE   VARCHAR2(4000),
     CREATE_DDL         CLOB,
     STATUS_CD          VARCHAR2(10) DEFAULT 'ACTIVE' NOT NULL,
-    CREATED_BY         VARCHAR2(20) NOT NULL,
+    CREATED_BY         VARCHAR2(128) NOT NULL,
     CREATED_AT         TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-    UPDATED_BY         VARCHAR2(20) NOT NULL,
+    UPDATED_BY         VARCHAR2(128) NOT NULL,
     UPDATED_AT         TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     CONSTRAINT PK_META_INDEX PRIMARY KEY (INDEX_ID),
     CONSTRAINT UK_META_INDEX UNIQUE (TABLE_ID, INDEX_NAME),
@@ -428,7 +428,7 @@ CREATE TABLE TB_META_INDEX_COLUMN (
 ```sql
 CREATE TABLE TB_META_SEQUENCE (
     SEQUENCE_ID       NUMBER(12)   NOT NULL,
-    SCHEMA_NAME       VARCHAR2(30) NOT NULL,
+    SCHEMA_NAME       VARCHAR2(128) NOT NULL,
     SEQUENCE_NAME     VARCHAR2(128) NOT NULL,
     MIN_VALUE         NUMBER,
     MAX_VALUE         NUMBER,
@@ -442,9 +442,9 @@ CREATE TABLE TB_META_SEQUENCE (
     USED_FOR_COLUMN   VARCHAR2(128),
     CREATE_DDL        CLOB,
     STATUS_CD         VARCHAR2(10) DEFAULT 'ACTIVE' NOT NULL,
-    CREATED_BY        VARCHAR2(20) NOT NULL,
+    CREATED_BY        VARCHAR2(128) NOT NULL,
     CREATED_AT        TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
-    UPDATED_BY        VARCHAR2(20) NOT NULL,
+    UPDATED_BY        VARCHAR2(128) NOT NULL,
     UPDATED_AT        TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL,
     CONSTRAINT PK_META_SEQUENCE PRIMARY KEY (SEQUENCE_ID),
     CONSTRAINT UK_META_SEQUENCE UNIQUE (SCHEMA_NAME, SEQUENCE_NAME),
@@ -462,7 +462,7 @@ CREATE TABLE TB_META_SEQUENCE (
 | HIST_ID        | NUMBER(16)     | PK (별도 SEQ)                              |
 | HIST_TYPE      | CHAR(1)        | I / U / D                                  |
 | HIST_AT        | TIMESTAMP      | 이력 발생 시각                             |
-| HIST_BY        | VARCHAR2(40)   | 담당자 사번(SYS_CONTEXT CLIENT_IDENTIFIER) |
+| HIST_BY        | VARCHAR2(128)   | 담당자 사번(SYS_CONTEXT CLIENT_IDENTIFIER) |
 | CHANGE_REASON  | VARCHAR2(2000) | **변경 사유 (NOT NULL)**                   |
 
 
@@ -473,11 +473,11 @@ CREATE TABLE TB_META_TABLE_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     /* ↓ TB_META_TABLE 원본 컬럼 전체를 동일하게 */
     TABLE_ID             NUMBER(12),
-    SCHEMA_NAME          VARCHAR2(30),
+    SCHEMA_NAME          VARCHAR2(128),
     TABLE_NAME           VARCHAR2(128),
     LOGICAL_NAME         VARCHAR2(200),
     DESCRIPTION          VARCHAR2(2000),
@@ -495,9 +495,9 @@ CREATE TABLE TB_META_TABLE_HIST (
     TOS_CD               VARCHAR2(20),
     STATUS_CD            VARCHAR2(10),
     REMARK               VARCHAR2(4000),
-    CREATED_BY           VARCHAR2(20),
+    CREATED_BY           VARCHAR2(128),
     CREATED_AT           TIMESTAMP,
-    UPDATED_BY           VARCHAR2(20),
+    UPDATED_BY           VARCHAR2(128),
     UPDATED_AT           TIMESTAMP,
     CONSTRAINT PK_META_TABLE_HIST PRIMARY KEY (HIST_ID),
     CONSTRAINT CK_META_TABLE_HIST_TYPE CHECK (HIST_TYPE IN ('I','U','D'))
@@ -1303,7 +1303,7 @@ CREATE TABLE TB_META_COLUMN_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     COLUMN_ID              NUMBER(14),
     TABLE_ID               NUMBER(12),
@@ -1332,9 +1332,9 @@ CREATE TABLE TB_META_COLUMN_HIST (
     TOS_CD                 VARCHAR2(20),
     STATUS_CD              VARCHAR2(10),
     REMARK                 VARCHAR2(4000),
-    CREATED_BY             VARCHAR2(20),
+    CREATED_BY             VARCHAR2(128),
     CREATED_AT             TIMESTAMP,
-    UPDATED_BY             VARCHAR2(20),
+    UPDATED_BY             VARCHAR2(128),
     UPDATED_AT             TIMESTAMP,
     CONSTRAINT PK_META_COLUMN_HIST PRIMARY KEY (HIST_ID),
     CONSTRAINT CK_META_COLUMN_HIST_TYPE CHECK (HIST_TYPE IN ('I','U','D'))
@@ -1346,7 +1346,7 @@ CREATE TABLE TB_META_INDEX_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     INDEX_ID           NUMBER(12),
     TABLE_ID           NUMBER(12),
@@ -1359,9 +1359,9 @@ CREATE TABLE TB_META_INDEX_HIST (
     PERFORMANCE_NOTE   VARCHAR2(4000),
     CREATE_DDL         CLOB,
     STATUS_CD          VARCHAR2(10),
-    CREATED_BY         VARCHAR2(20),
+    CREATED_BY         VARCHAR2(128),
     CREATED_AT         TIMESTAMP,
-    UPDATED_BY         VARCHAR2(20),
+    UPDATED_BY         VARCHAR2(128),
     UPDATED_AT         TIMESTAMP,
     CONSTRAINT PK_META_INDEX_HIST PRIMARY KEY (HIST_ID),
     CONSTRAINT CK_META_INDEX_HIST_TYPE CHECK (HIST_TYPE IN ('I','U','D'))
@@ -1372,7 +1372,7 @@ CREATE TABLE TB_META_INDEX_COLUMN_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     INDEX_ID         NUMBER(12),
     COLUMN_POS       NUMBER(3),
@@ -1388,10 +1388,10 @@ CREATE TABLE TB_META_SEQUENCE_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     SEQUENCE_ID       NUMBER(12),
-    SCHEMA_NAME       VARCHAR2(30),
+    SCHEMA_NAME       VARCHAR2(128),
     SEQUENCE_NAME     VARCHAR2(128),
     MIN_VALUE         NUMBER,
     MAX_VALUE         NUMBER,
@@ -1405,9 +1405,9 @@ CREATE TABLE TB_META_SEQUENCE_HIST (
     USED_FOR_COLUMN   VARCHAR2(128),
     CREATE_DDL        CLOB,
     STATUS_CD         VARCHAR2(10),
-    CREATED_BY        VARCHAR2(20),
+    CREATED_BY        VARCHAR2(128),
     CREATED_AT        TIMESTAMP,
-    UPDATED_BY        VARCHAR2(20),
+    UPDATED_BY        VARCHAR2(128),
     UPDATED_AT        TIMESTAMP,
     CONSTRAINT PK_META_SEQUENCE_HIST PRIMARY KEY (HIST_ID),
     CONSTRAINT CK_META_SEQUENCE_HIST_TYPE CHECK (HIST_TYPE IN ('I','U','D'))
@@ -1418,7 +1418,7 @@ CREATE TABLE TB_META_CODE_HIST (
     HIST_ID       NUMBER(16)     NOT NULL,
     HIST_TYPE     CHAR(1)        NOT NULL,
     HIST_AT       TIMESTAMP      DEFAULT SYSTIMESTAMP NOT NULL,
-    HIST_BY       VARCHAR2(40)   NOT NULL,
+    HIST_BY       VARCHAR2(128)   NOT NULL,
     CHANGE_REASON VARCHAR2(2000) NOT NULL,
     CODE_GROUP    VARCHAR2(30),
     CODE_VALUE    VARCHAR2(30),
@@ -1426,9 +1426,9 @@ CREATE TABLE TB_META_CODE_HIST (
     DESCRIPTION   VARCHAR2(2000),
     SORT_ORDER    NUMBER(4),
     USE_YN        CHAR(1),
-    CREATED_BY    VARCHAR2(20),
+    CREATED_BY    VARCHAR2(128),
     CREATED_AT    TIMESTAMP,
-    UPDATED_BY    VARCHAR2(20),
+    UPDATED_BY    VARCHAR2(128),
     UPDATED_AT    TIMESTAMP,
     CONSTRAINT PK_META_CODE_HIST PRIMARY KEY (HIST_ID),
     CONSTRAINT CK_META_CODE_HIST_TYPE CHECK (HIST_TYPE IN ('I','U','D'))
