@@ -285,6 +285,20 @@ FROM TB_META_COLUMN
 WHERE TABLE_ID = ${tableIdRef};`;
 
     let out = '';
+    out += `-- ═══════════════════════════════════════════════════════════════════\n`;
+    out += `-- [경고] CREATE TABLE — implicit commit 주의\n`;
+    out += `-- ───────────────────────────────────────────────────────────────────\n`;
+    out += `-- CREATE TABLE 은 Oracle DDL이며 직후 implicit commit을 동반합니다.\n`;
+    out += `-- 후속 메타 INSERT(TB_META_TABLE / TB_META_COLUMN / HIST)가 실패해도\n`;
+    out += `-- 물리 테이블은 이미 commit되어 남습니다(SAVEPOINT 효과 없음).\n`;
+    out += `--\n`;
+    out += `-- 실패 발생 시 다음을 반드시 확인:\n`;
+    out += `--   1) 물리 테이블 존재 여부 (USER_TABLES)\n`;
+    out += `--   2) TB_META_TABLE 적재 여부\n`;
+    out += `--   3) TB_META_COLUMN 적재 여부\n`;
+    out += `--   4) TB_META_*_HIST 적재 여부\n`;
+    out += `-- 부정합이면 DROP TABLE 후 본 SQL 전체를 재실행하거나 수동 cleanup하세요.\n`;
+    out += `-- ═══════════════════════════════════════════════════════════════════\n`;
     if (warned) out += `-- [경고] 테이블명이 TB_ prefix로 자동 보정됨: ${meta.tableName.toUpperCase()} → ${tbl}\n`;
     out += Utils.section('1. 테이블 DDL') + ddl;
     if (viewDdl) out += Utils.section('2. 뷰 DDL') + viewDdl;
