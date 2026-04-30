@@ -46,6 +46,16 @@ const Utils = {
     return null;
   },
 
+  /** 식별자 검증 → errors 배열에 누적. value가 빈 값이고 required=false면 통과. */
+  checkName(label, value, errors, required = true) {
+    if (!value) {
+      if (required) errors.push(`${label}: 값이 필요합니다.`);
+      return;
+    }
+    const err = Utils.validateName(String(value).toUpperCase());
+    if (err) errors.push(`${label}(${value}): ${err}`);
+  },
+
   /** 드롭다운 option 생성 */
   buildOptions(codeGroup, includeEmpty = true) {
     const arr = CODES[codeGroup] || [];
