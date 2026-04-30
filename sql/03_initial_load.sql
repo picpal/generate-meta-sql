@@ -3,11 +3,12 @@
 -- 실행 순서: 3 / 3
 -- 선행: 02_common_code.sql
 -- 후행: (없음 — 이후 비즈니스 메타 수기 UPDATE)
--- 출처: DB_메타정보_관리체계_표준설계.md §7 (7.1~7.5) + 부록 B
+-- 출처: DB_메타정보_관리체계_표준설계.md §7 (7.1~7.5)
 -- 사전 수정 필요: WHERE OWNER IN ('SVC1','SVC2', ...) 의 스키마 목록을
 --               실제 대상 스키마로 교체한 뒤 실행
--- 구성: 7.x 본 적재 → (필요 시 LONG 후처리) → 7.5.x HIST 적재 를 테이블
---       단위로 번갈아 실행하여 동일 트랜잭션으로 묶고, 마지막에 일괄 COMMIT.
+-- 구성: 7.x 본 적재 → 7.5.x HIST 적재 를 테이블 단위로 번갈아 실행하여
+--       동일 트랜잭션으로 묶고, 마지막에 일괄 COMMIT.
+-- 정책: 저장 프로시저/함수/트리거 및 익명 PL/SQL 블록 없이 SQL DDL/DML만 사용한다.
 -- HIST 고정값: HIST_TYPE='I', HIST_BY=USER, CHANGE_REASON='INITIAL_LOAD'
 -- 재실행 안전성: 본 INSERT는 NOT EXISTS 가드, HIST INSERT는
 --                ('I','INITIAL_LOAD') 중복 가드로 누적 중복을 방지한다.
@@ -45,7 +46,9 @@ WHERE t.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
   AND t.TABLE_NAME NOT LIKE 'TB_META_%'    -- 자기 자신 제외
   AND t.TEMPORARY = 'N'                    -- GTT 제외
   AND t.NESTED    = 'NO'                   -- nested table 제외
-  AND t.IOT_TYPE IS NULL                   -- IOT overflow segment 제외
+  AND NVL(t.IOT_TYPE, 'HEAP') NOT IN (
+        'IOT_OVERFLOW', 'IOT_MAPPING'
+      )                                    -- IOT 본 테이블은 포함, 부속 segment 제외
   AND NOT EXISTS (                         -- 재실행 시 중복 방지
         SELECT 1 FROM TB_META_TABLE m
          WHERE m.SCHEMA_NAME = t.OWNER
@@ -104,7 +107,7 @@ SELECT
     cc.COMMENTS,
     tc.DATA_TYPE, tc.DATA_LENGTH, tc.DATA_PRECISION, tc.DATA_SCALE,
     CASE tc.NULLABLE WHEN 'Y' THEN 'Y' ELSE 'N' END,
-    NULL,  -- DATA_DEFAULT는 LONG → 아래 PL/SQL 후처리에서 적재
+    NULL,  -- DATA_DEFAULT는 LONG 타입이라 SQL-only 초기 적재에서는 제외
     NVL2(pk.COLUMN_NAME,'Y','N'),
     NVL2(uk.COLUMN_NAME,'Y','N'),
     NVL2(fk.COLUMN_NAME,'Y','N'),
@@ -151,49 +154,8 @@ WHERE NOT EXISTS (
 )
 ;
 
--- DATA_DEFAULT 후처리: LONG → VARCHAR2 변환 + BULK 업데이트 (부록 B)
-DECLARE
-    TYPE t_id_arr  IS TABLE OF TB_META_COLUMN.COLUMN_ID%TYPE;
-    TYPE t_def_arr IS TABLE OF TB_META_COLUMN.DEFAULT_VALUE%TYPE;
-    v_ids  t_id_arr  := t_id_arr();
-    v_defs t_def_arr := t_def_arr();
-    v_default LONG;
-BEGIN
-    FOR r IN (
-        SELECT mc.COLUMN_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mc.COLUMN_NAME
-          FROM TB_META_COLUMN mc
-          JOIN TB_META_TABLE  mt ON mt.TABLE_ID = mc.TABLE_ID
-         WHERE mc.DEFAULT_VALUE IS NULL
-    ) LOOP
-        BEGIN
-            SELECT DATA_DEFAULT
-              INTO v_default
-              FROM ALL_TAB_COLUMNS
-             WHERE OWNER       = r.SCHEMA_NAME
-               AND TABLE_NAME  = r.TABLE_NAME
-               AND COLUMN_NAME = r.COLUMN_NAME;
-            IF v_default IS NOT NULL THEN
-                v_ids.EXTEND;  v_ids(v_ids.LAST)   := r.COLUMN_ID;
-                v_defs.EXTEND; v_defs(v_defs.LAST) := SUBSTR(v_default, 1, 500);
-            END IF;
-        EXCEPTION
-            WHEN NO_DATA_FOUND THEN NULL;
-        END;
-    END LOOP;
-
-    IF v_ids.COUNT > 0 THEN
-        FORALL i IN 1 .. v_ids.COUNT
-            UPDATE TB_META_COLUMN
-               SET DEFAULT_VALUE = v_defs(i),
-                   UPDATED_BY    = 'INITIAL_LOAD',
-                   UPDATED_AT    = SYSTIMESTAMP
-             WHERE COLUMN_ID = v_ids(i);
-    END IF;
-END;
-/
--- 주의: 이 블록은 §7.5.2 HIST 적재 이전에 실행되므로
---       §6.8의 'U' HIST 인라인 INSERT는 불필요(직후 'I' 스냅샷에 최종값 포함).
---       운영 중 단독 실행 시에는 'U' HIST 인라인 INSERT를 추가해야 한다.
+-- DATA_DEFAULT는 ALL_TAB_COLUMNS에서 LONG 타입이므로 SQL-only 표준 스크립트에서는 적재하지 않는다.
+-- 필요 시 DB 밖의 변경 도구가 조회/변환 후 TB_META_COLUMN과 TB_META_COLUMN_HIST를 같은 트랜잭션에서 갱신한다.
 
 -- §7.5.2 TB_META_COLUMN_HIST
 INSERT INTO TB_META_COLUMN_HIST (
@@ -311,51 +273,8 @@ WHERE ic.TABLE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
       )
 ;
 
--- 함수기반 인덱스 표현식 후처리: ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION이 LONG
--- 일반 컬럼 인덱스 행은 ALL_IND_EXPRESSIONS에 매칭이 없어 NO_DATA_FOUND로 무시됨
-DECLARE
-    TYPE t_id_arr   IS TABLE OF TB_META_INDEX_COLUMN.INDEX_ID%TYPE;
-    TYPE t_pos_arr  IS TABLE OF TB_META_INDEX_COLUMN.COLUMN_POS%TYPE;
-    TYPE t_expr_arr IS TABLE OF TB_META_INDEX_COLUMN.FUNC_EXPRESSION%TYPE;
-    v_ids   t_id_arr   := t_id_arr();
-    v_poss  t_pos_arr  := t_pos_arr();
-    v_exprs t_expr_arr := t_expr_arr();
-    v_expr  LONG;
-BEGIN
-    FOR r IN (
-        SELECT mic.INDEX_ID, mic.COLUMN_POS,
-               mi.INDEX_NAME, mt.SCHEMA_NAME
-          FROM TB_META_INDEX_COLUMN mic
-          JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
-          JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
-         WHERE mic.FUNC_EXPRESSION IS NULL
-    ) LOOP
-        BEGIN
-            SELECT COLUMN_EXPRESSION
-              INTO v_expr
-              FROM ALL_IND_EXPRESSIONS
-             WHERE INDEX_OWNER     = r.SCHEMA_NAME
-               AND INDEX_NAME      = r.INDEX_NAME
-               AND COLUMN_POSITION = r.COLUMN_POS;
-            IF v_expr IS NOT NULL THEN
-                v_ids.EXTEND;   v_ids(v_ids.LAST)     := r.INDEX_ID;
-                v_poss.EXTEND;  v_poss(v_poss.LAST)   := r.COLUMN_POS;
-                v_exprs.EXTEND; v_exprs(v_exprs.LAST) := SUBSTR(v_expr, 1, 2000);
-            END IF;
-        EXCEPTION
-            WHEN NO_DATA_FOUND THEN NULL;
-        END;
-    END LOOP;
-
-    IF v_ids.COUNT > 0 THEN
-        FORALL i IN 1 .. v_ids.COUNT
-            UPDATE TB_META_INDEX_COLUMN
-               SET FUNC_EXPRESSION = v_exprs(i)
-             WHERE INDEX_ID   = v_ids(i)
-               AND COLUMN_POS = v_poss(i);
-    END IF;
-END;
-/
+-- 함수기반 인덱스 표현식(ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION)도 LONG 타입이므로
+-- SQL-only 표준 스크립트에서는 FUNC_EXPRESSION을 NULL로 둔다.
 
 -- §7.5.4 TB_META_INDEX_COLUMN_HIST
 INSERT INTO TB_META_INDEX_COLUMN_HIST (

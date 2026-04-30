@@ -39,7 +39,7 @@
 
 ## 2. 설계 원칙
 
-1. **단순성 우선**: 1차 버전은 Oracle 네이티브 기능(테이블 + 시퀀스)만으로 구성. **트리거·프로시저·함수 일체 사용 금지** (폐쇄망·금융권 정책).
+1. **단순성 우선**: 1차 버전은 Oracle 네이티브 기능(테이블 + 시퀀스 + SQL DDL/DML)만으로 구성. **트리거·프로시저·함수·익명 PL/SQL 블록 일체 사용 금지** (폐쇄망·금융권 정책).
 2. **SSOT**: 메타 테이블이 유일한 원천. 엑셀·워드 문서의 메타 정의는 금지(이관 후 폐기).
 3. **선언적 분류**: 모든 분류값은 공통코드(`TB_META_CODE`)로 관리. 추가 분류 필요 시 논의 필요
 4. **Drift 감지 가능성**: 실제 Oracle 카탈로그와 메타 테이블 상태를 주기적으로 비교 필요.
@@ -556,10 +556,77 @@ COMMIT;
 
 > **주의**: HARD 삭제 시 순서가 뒤바뀌면 HIST에 기록이 남지 않는다. 도구는 HIST → 원본 DELETE 순서를 강제한다.
 
-**HARD DELETE 패턴 SQL (TB_META_TABLE 예시)**
+**HARD DELETE 순서 (TB_META_TABLE 기준)**
+
+> `TB_META_COLUMN`과 `TB_META_INDEX`가 `TB_META_TABLE(TABLE_ID)`를 참조하므로 부모 테이블을 바로 삭제하면 ORA-02292가 발생할 수 있다. HARD DELETE가 정책적으로 승인된 경우에도 반드시 **자식 HIST 적재 → 자식 DELETE → 부모 HIST 적재 → 부모 DELETE** 순서로 수행한다. 아래는 순서 표준이며, 실제 도구는 각 `*_HIST` INSERT 컬럼을 §7.5와 동일하게 펼쳐 생성한다.
 
 ```sql
--- 1) HIST에 삭제 직전 스냅샷을 'D'로 먼저 INSERT
+-- 1) 인덱스-컬럼 매핑: HIST 적재 후 삭제
+INSERT INTO TB_META_INDEX_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+)
+SELECT
+    SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, :EMP_ID, :CHANGE_REASON,
+    mic.INDEX_ID, mic.COLUMN_POS, mic.COLUMN_NAME, mic.SORT_ORDER, mic.FUNC_EXPRESSION
+FROM TB_META_INDEX_COLUMN mic
+JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
+WHERE mi.TABLE_ID = :TABLE_ID;
+
+DELETE FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = :TABLE_ID);
+
+-- 2) 인덱스 메타: HIST 적재 후 삭제
+INSERT INTO TB_META_INDEX_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INITRANS, PCTFREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL,
+    STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT
+    SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, :EMP_ID, :CHANGE_REASON,
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INITRANS, PCTFREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL,
+    STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+FROM TB_META_INDEX
+WHERE TABLE_ID = :TABLE_ID;
+
+DELETE FROM TB_META_INDEX WHERE TABLE_ID = :TABLE_ID;
+
+-- 3) 컬럼 메타: HIST 적재 후 삭제
+INSERT INTO TB_META_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+    LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE,
+    PK_YN, UK_YN, FK_YN,
+    PII_YN, PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT
+    SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, :EMP_ID, :CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+    LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE,
+    PK_YN, UK_YN, FK_YN,
+    PII_YN, PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+FROM TB_META_COLUMN
+WHERE TABLE_ID = :TABLE_ID;
+
+DELETE FROM TB_META_COLUMN WHERE TABLE_ID = :TABLE_ID;
+
+-- 4) 부모 테이블 메타: HIST 적재 후 삭제
 INSERT INTO TB_META_TABLE_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
@@ -580,7 +647,6 @@ SELECT
 FROM TB_META_TABLE
 WHERE TABLE_ID = :TABLE_ID;
 
--- 2) 동일 트랜잭션에서 원본 DELETE
 DELETE FROM TB_META_TABLE WHERE TABLE_ID = :TABLE_ID;
 
 COMMIT;
@@ -758,7 +824,7 @@ COMMIT;
 
 ### 7.1 테이블 적재
 
-> **필터 강화**: `BIN$%`(휴지통)/`TB_META_%`(자기 자신)에 더해 GTT(`TEMPORARY='Y'`), nested table(`NESTED='YES'`), IOT overflow segment(`IOT_TYPE` 비어있지 않음)도 제외한다. **`NOT EXISTS` 가드**로 재실행 시 UK(`SCHEMA_NAME, TABLE_NAME`) 충돌 없이 누락분만 적재된다.
+> **필터 강화**: `BIN$%`(휴지통)/`TB_META_%`(자기 자신)에 더해 GTT(`TEMPORARY='Y'`), nested table(`NESTED='YES'`), IOT 부속 segment(`IOT_OVERFLOW`, `IOT_MAPPING`)도 제외한다. 정상 IOT 본 테이블(`IOT_TYPE='IOT'`)은 관리 대상에 포함한다. **`NOT EXISTS` 가드**로 재실행 시 UK(`SCHEMA_NAME, TABLE_NAME`) 충돌 없이 누락분만 적재된다.
 
 ```sql
 INSERT INTO TB_META_TABLE (
@@ -789,7 +855,9 @@ WHERE t.OWNER IN ('SVC1','SVC2' /* 추가 스키마는 콤마와 함께 이어 �
   AND t.TABLE_NAME NOT LIKE 'TB_META_%'    -- 자기 자신 제외
   AND t.TEMPORARY = 'N'                    -- GTT 제외
   AND t.NESTED    = 'NO'                   -- nested table 제외
-  AND t.IOT_TYPE IS NULL                   -- IOT overflow segment 제외
+  AND NVL(t.IOT_TYPE, 'HEAP') NOT IN (
+        'IOT_OVERFLOW', 'IOT_MAPPING'
+      )                                    -- IOT 본 테이블은 포함, 부속 segment 제외
   AND NOT EXISTS (
         SELECT 1 FROM TB_META_TABLE m
          WHERE m.SCHEMA_NAME = t.OWNER
@@ -825,7 +893,7 @@ SELECT
     cc.COMMENTS,
     tc.DATA_TYPE, tc.DATA_LENGTH, tc.DATA_PRECISION, tc.DATA_SCALE,
     CASE tc.NULLABLE WHEN 'Y' THEN 'Y' ELSE 'N' END,
-    NULL,  -- DATA_DEFAULT는 LONG 타입이라 SQL에서 직접 SUBSTR 불가. 부록 B의 PL/SQL 후처리 배치로 별도 적재한다.
+    NULL,  -- DATA_DEFAULT는 LONG 타입이라 SQL-only 초기 적재에서는 제외한다.
     NVL2(pk.COLUMN_NAME,'Y','N'),
     NVL2(uk.COLUMN_NAME,'Y','N'),
     NVL2(fk.COLUMN_NAME,'Y','N'),
@@ -875,7 +943,7 @@ WHERE NOT EXISTS (
 > **분류 로직 보정**:
 > - `INDEX_TYPE_CD`: BITMAP/FUNCTION-BASED/REVERSE를 우선 매칭한 뒤 UNIQUE → 그 외 NORMAL. (이전: UNIQUE 우선이라 함수+UNIQUE/리버스+UNIQUE 인덱스의 유형 정보 손실)
 > - `PURPOSE_CD`: `ALL_CONSTRAINTS`의 PK 제약과 `INDEX_NAME` 매칭으로 PK 판별. UK 자동 인덱스를 PK로 잘못 분류하던 문제 제거.
-> - 함수기반 인덱스의 표현식은 `ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION`(LONG)에 들어 있어 SQL로 직접 적재할 수 없으므로, **§7.3.2 직후 PL/SQL 후처리**로 `FUNC_EXPRESSION`을 채운 뒤 §7.5.4 HIST를 적재한다.
+> - 함수기반 인덱스의 표현식은 `ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION`(LONG)에 들어 있어 SQL-only 표준 스크립트에서는 `FUNC_EXPRESSION`을 `NULL`로 둔다. 필요 시 DB 밖의 변경 도구가 별도 보강한다.
 > - `NOT EXISTS` 가드로 UK 충돌 없이 재실행.
 
 ```sql
@@ -930,50 +998,6 @@ WHERE ic.TABLE_OWNER IN ('SVC1','SVC2')
            AND m.COLUMN_POS = ic.COLUMN_POSITION
       )
 ;
-
--- 7.3.3 함수기반 인덱스 표현식 후처리 (LONG → VARCHAR2)
-DECLARE
-    TYPE t_id_arr   IS TABLE OF TB_META_INDEX_COLUMN.INDEX_ID%TYPE;
-    TYPE t_pos_arr  IS TABLE OF TB_META_INDEX_COLUMN.COLUMN_POS%TYPE;
-    TYPE t_expr_arr IS TABLE OF TB_META_INDEX_COLUMN.FUNC_EXPRESSION%TYPE;
-    v_ids   t_id_arr   := t_id_arr();
-    v_poss  t_pos_arr  := t_pos_arr();
-    v_exprs t_expr_arr := t_expr_arr();
-    v_expr  LONG;
-BEGIN
-    FOR r IN (
-        SELECT mic.INDEX_ID, mic.COLUMN_POS,
-               mi.INDEX_NAME, mt.SCHEMA_NAME
-          FROM TB_META_INDEX_COLUMN mic
-          JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
-          JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
-         WHERE mic.FUNC_EXPRESSION IS NULL
-    ) LOOP
-        BEGIN
-            SELECT COLUMN_EXPRESSION
-              INTO v_expr
-              FROM ALL_IND_EXPRESSIONS
-             WHERE INDEX_OWNER     = r.SCHEMA_NAME
-               AND INDEX_NAME      = r.INDEX_NAME
-               AND COLUMN_POSITION = r.COLUMN_POS;
-            IF v_expr IS NOT NULL THEN
-                v_ids.EXTEND;   v_ids(v_ids.LAST)     := r.INDEX_ID;
-                v_poss.EXTEND;  v_poss(v_poss.LAST)   := r.COLUMN_POS;
-                v_exprs.EXTEND; v_exprs(v_exprs.LAST) := SUBSTR(v_expr, 1, 2000);
-            END IF;
-        EXCEPTION WHEN NO_DATA_FOUND THEN NULL;
-        END;
-    END LOOP;
-
-    IF v_ids.COUNT > 0 THEN
-        FORALL i IN 1 .. v_ids.COUNT
-            UPDATE TB_META_INDEX_COLUMN
-               SET FUNC_EXPRESSION = v_exprs(i)
-             WHERE INDEX_ID   = v_ids(i)
-               AND COLUMN_POS = v_poss(i);
-    END IF;
-END;
-/
 ```
 
 ### 7.4 시퀀스 적재
@@ -1049,7 +1073,7 @@ WHERE NOT EXISTS (
 
 #### 7.5.2 TB_META_COLUMN_HIST
 
-> 부록 B의 `DEFAULT_VALUE` 후처리는 본 7.5.2 INSERT **이전에** 수행한다(부록 B 직후 'I' 스냅샷에 보정값까지 함께 들어감).
+> SQL-only 표준에서는 `DEFAULT_VALUE`를 초기 적재하지 않으므로 보통 `NULL`로 스냅샷된다.
 
 ```sql
 INSERT INTO TB_META_COLUMN_HIST (
@@ -1115,7 +1139,7 @@ WHERE NOT EXISTS (
 
 #### 7.5.4 TB_META_INDEX_COLUMN_HIST
 
-> §7.3.3 함수 표현식 후처리 **이후에** 수행한다(`FUNC_EXPRESSION` 보정값까지 함께 'I' 스냅샷에 들어감).
+> SQL-only 표준에서는 함수기반 인덱스 표현식(`FUNC_EXPRESSION`)을 초기 적재하지 않으므로 보통 `NULL`로 스냅샷된다.
 
 ```sql
 INSERT INTO TB_META_INDEX_COLUMN_HIST (
@@ -1185,7 +1209,7 @@ WHERE t.OWNER IN ('SVC1','SVC2')
   AND t.TABLE_NAME NOT LIKE 'TB_META_%'
   AND t.TEMPORARY = 'N'
   AND t.NESTED    = 'NO'
-  AND t.IOT_TYPE IS NULL
+  AND NVL(t.IOT_TYPE, 'HEAP') NOT IN ('IOT_OVERFLOW', 'IOT_MAPPING')
 ;
 ```
 
@@ -1412,57 +1436,16 @@ CREATE TABLE TB_META_CODE_HIST (
 CREATE INDEX IDX_META_CODE_HIST_01 ON TB_META_CODE_HIST (CODE_GROUP, CODE_VALUE, HIST_AT);
 ```
 
-## 부록 B. DATA_DEFAULT(LONG) 후처리 PL/SQL
+## 부록 B. SQL-only LONG 컬럼 처리 방침
 
-`ALL_TAB_COLUMNS.DATA_DEFAULT`는 LONG 타입이라 SQL의 `SUBSTR`/표현식이 직접 통하지 않는다(ORA-00932). 초기 적재(§7.2) 본 INSERT 직후, **§7.5.2 HIST INSERT 이전에** 다음 PL/SQL을 1회 실행해 `DEFAULT_VALUE`를 채운다. 이 순서를 지키면 §7.5.2의 'I' 스냅샷에 보정값까지 포함되어 별도 'U' HIST를 남길 필요가 없다.
+정책상 트리거·프로시저·함수뿐 아니라 익명 PL/SQL 블록도 사용하지 않는다. 따라서 Oracle 카탈로그의 LONG 타입 컬럼은 표준 SQL 초기 적재에서 제외한다.
 
-```sql
-DECLARE
-    TYPE t_id_arr  IS TABLE OF TB_META_COLUMN.COLUMN_ID%TYPE;
-    TYPE t_def_arr IS TABLE OF TB_META_COLUMN.DEFAULT_VALUE%TYPE;
-    v_ids  t_id_arr  := t_id_arr();
-    v_defs t_def_arr := t_def_arr();
-    v_default LONG;
-BEGIN
-    FOR r IN (
-        SELECT mc.COLUMN_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mc.COLUMN_NAME
-          FROM TB_META_COLUMN mc
-          JOIN TB_META_TABLE  mt ON mt.TABLE_ID = mc.TABLE_ID
-         WHERE mc.DEFAULT_VALUE IS NULL
-    ) LOOP
-        BEGIN
-            SELECT DATA_DEFAULT
-              INTO v_default
-              FROM ALL_TAB_COLUMNS
-             WHERE OWNER       = r.SCHEMA_NAME
-               AND TABLE_NAME  = r.TABLE_NAME
-               AND COLUMN_NAME = r.COLUMN_NAME;
-            IF v_default IS NOT NULL THEN
-                v_ids.EXTEND;  v_ids(v_ids.LAST)   := r.COLUMN_ID;
-                v_defs.EXTEND; v_defs(v_defs.LAST) := SUBSTR(v_default, 1, 500);
-            END IF;
-        EXCEPTION
-            WHEN NO_DATA_FOUND THEN NULL;
-        END;
-    END LOOP;
+| 대상 | 카탈로그 컬럼 | 메타 컬럼 | 초기 적재값 | 비고 |
+| --- | --- | --- | --- | --- |
+| 컬럼 기본값 | `ALL_TAB_COLUMNS.DATA_DEFAULT` | `TB_META_COLUMN.DEFAULT_VALUE` | `NULL` | SQL 표현식으로 직접 변환 불가 |
+| 함수기반 인덱스 식 | `ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION` | `TB_META_INDEX_COLUMN.FUNC_EXPRESSION` | `NULL` | SQL 표현식으로 직접 변환 불가 |
 
-    IF v_ids.COUNT > 0 THEN
-        FORALL i IN 1 .. v_ids.COUNT
-            UPDATE TB_META_COLUMN
-               SET DEFAULT_VALUE = v_defs(i),
-                   UPDATED_BY    = 'INITIAL_LOAD',
-                   UPDATED_AT    = SYSTIMESTAMP
-             WHERE COLUMN_ID = v_ids(i);
-    END IF;
-
-    COMMIT;
-END;
-/
-```
-
-> - PL/SQL 변수에 LONG을 받으면 자동으로 VARCHAR2(32760)로 변환되므로 `SUBSTR` 사용이 가능해진다. LONG SELECT는 BULK COLLECT가 불가하므로 행단위 SELECT + FORALL UPDATE 패턴을 사용한다.
-> - 본 블록은 폐쇄망·금융권의 트리거/프로시저 금지 정책에서 **"저장 객체로 남기지 않는 1회성 익명 블록"** 으로 분류되어 허용 대상이다.
-> - **운영 중 단독 실행 케이스**(§7.5.2 HIST가 이미 적재된 뒤 누락된 `DEFAULT_VALUE`만 보정하는 경우): §6.8 정책에 따라 UPDATE와 동일 트랜잭션에서 `TB_META_COLUMN_HIST`에 `HIST_TYPE='U'`, `CHANGE_REASON='SYSTEM_SYNC'`(또는 적절한 사유)로 인라인 INSERT를 추가해야 한다. 초기 적재 경로(§7.5.2 이전 실행)에서는 불필요.
+필요 시 DB 밖의 변경 도구가 해당 값을 조회·변환한 뒤 원본 메타 테이블 UPDATE와 `*_HIST` INSERT를 같은 트랜잭션으로 수행한다. 이 경우 `CHANGE_REASON`은 `SYSTEM_SYNC` 또는 별도 동기화 사유를 사용한다.
 
 ---
 
