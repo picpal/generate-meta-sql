@@ -34,12 +34,34 @@ const SequenceTab = (() => {
   }
 
   function renderCreate() { UI.renderFields(document.getElementById('seq-create-body'), seqFields('seq-c', true)); }
-  function renderAlter()  { UI.renderFields(document.getElementById('seq-alter-body'),  seqFields('seq-a', false)); }
+  function renderAlter()  {
+    UI.renderFields(document.getElementById('seq-alter-body'), seqFields('seq-a', false));
+    bindAlterTouchTracking();
+  }
   function renderDrop()   {
     UI.renderFields(document.getElementById('seq-drop-body'), [
       { label:'스키마명', req:true, name:'schema', id:'seq-d-schema' },
       { label:'시퀀스명', req:true, name:'seqName', id:'seq-d-seqName' },
     ]);
+  }
+
+  // ALTER 폼에 touched-tracking 부착: 사용자가 명시적으로 변경한 필드만 SET 하기 위함.
+  function bindAlterTouchTracking() {
+    const ids = [
+      'seq-a-cycleYn', 'seq-a-orderYn',
+      'seq-a-incrementBy', 'seq-a-minValue', 'seq-a-maxValue', 'seq-a-cacheSize',
+      'seq-a-purposeCd', 'seq-a-usedForTable', 'seq-a-usedForColumn',
+    ];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const evt = (el.type === 'checkbox' || el.tagName === 'SELECT') ? 'change' : 'input';
+      el.addEventListener(evt, () => { el.dataset.touched = '1'; }, { once: true });
+    });
+  }
+  function isTouched(prefix, field) {
+    const el = document.getElementById(`${prefix}-${field}`);
+    return !!(el && el.dataset && el.dataset.touched === '1');
   }
 
   function readField(prefix, fields) {
@@ -135,19 +157,23 @@ const SequenceTab = (() => {
 
     const schema = d.schema.toUpperCase();
     const seq    = buildSeqName(d.seqName);
+
+    // DDL-affecting 옵션 중 하나라도 사용자가 명시적으로 변경했는지 판정.
+    const ddlChanged = ['incrementBy','minValue','maxValue','cacheSize','cycleYn','orderYn']
+      .some(f => isTouched('seq-a', f));
     const ddl = buildDdl(schema, seq, d, true);
 
     const sets = [
       d.purposeCd ? `PURPOSE_CD = ${Utils.q(d.purposeCd)}` : null,
       d.usedForTable ? `USED_FOR_TABLE = ${Utils.q(d.usedForTable.toUpperCase())}` : null,
       d.usedForColumn ? `USED_FOR_COLUMN = ${Utils.q(d.usedForColumn.toUpperCase())}` : null,
-      `INCREMENT_BY = ${Utils.num(d.incrementBy)}`,
-      `MIN_VALUE = ${Utils.num(d.minValue)}`,
-      `MAX_VALUE = ${Utils.num(d.maxValue)}`,
-      `CACHE_SIZE = ${Utils.num(d.cacheSize)}`,
-      `CYCLE_YN = ${Utils.yn(d.cycleYn)}`,
-      `ORDER_YN = ${Utils.yn(d.orderYn)}`,
-      `CREATE_DDL = ${Utils.q(ddl.trim())}`,
+      d.incrementBy ? `INCREMENT_BY = ${Utils.num(d.incrementBy)}` : null,
+      d.minValue ? `MIN_VALUE = ${Utils.num(d.minValue)}` : null,
+      d.maxValue ? `MAX_VALUE = ${Utils.num(d.maxValue)}` : null,
+      d.cacheSize ? `CACHE_SIZE = ${Utils.num(d.cacheSize)}` : null,
+      isTouched('seq-a','cycleYn') ? `CYCLE_YN = ${Utils.yn(d.cycleYn)}` : null,
+      isTouched('seq-a','orderYn') ? `ORDER_YN = ${Utils.yn(d.orderYn)}` : null,
+      ddlChanged ? `CREATE_DDL = ${Utils.q(ddl.trim())}` : null,
       Utils.auditCols(emp).update,
     ].filter(Boolean).join(',\n       ');
 
@@ -161,7 +187,10 @@ const SequenceTab = (() => {
       whereClause: `SCHEMA_NAME = ${Utils.q(schema)} AND SEQUENCE_NAME = ${Utils.q(seq)}`,
     });
 
-    let out = Utils.section(`시퀀스 변경: ${schema}.${seq}`) + ddl;
+    let out = Utils.section(`시퀀스 변경: ${schema}.${seq}`);
+    // DDL-affecting 옵션이 하나도 touched 아니면 빈 ALTER SEQUENCE 출력 회피.
+    if (ddlChanged) out += ddl;
+    else out += `-- (DDL-affecting 옵션 미변경 — ALTER SEQUENCE 생략)\n`;
     out += Utils.section('메타 UPDATE') + update + '\n';
     out += Utils.section('시퀀스 HIST INSERT (U, 변경 후 스냅샷)') + hist + '\n\nCOMMIT;\n';
     Utils.setOutput('seq-output', out);
