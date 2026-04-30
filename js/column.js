@@ -277,7 +277,20 @@ const ColumnTab = (() => {
       out += Utils.section('컬럼 HIST INSERT (U, SOFT)') + hist + '\n\nCOMMIT;\n';
     } else {
       out += Utils.section(`컬럼 하드 삭제: ${schema}.${tbl}.${col}`);
-      out += `-- [주의] HARD 삭제: HIST를 먼저 남기고 원본을 DROP합니다.\n`;
+      out += `-- ═══════════════════════════════════════════════════════════════════
+-- [경고] HARD 삭제 — implicit commit 주의
+-- ───────────────────────────────────────────────────────────────────
+-- ALTER TABLE … DROP COLUMN 은 Oracle에서 DDL이며 직전·직후로
+-- implicit commit을 동반합니다. 본 SQL의 어느 단계가 실패해도 이미
+-- commit된 단계는 롤백되지 않습니다(SAVEPOINT 효과 없음).
+--
+-- 실패 발생 시 다음을 반드시 확인:
+--   1) HIST 적재 여부 (TB_META_*_HIST)
+--   2) 원본/메타 DELETE 여부
+--   3) Oracle 측 인덱스 자동 DROP 여부
+-- 부정합이 발견되면 수동 cleanup으로 일관성 회복하세요.
+-- ═══════════════════════════════════════════════════════════════════
+`;
 
       // 인덱스 정리 대상: 이 컬럼만으로 구성된(다른 컬럼이 없는) 인덱스
       // → ALTER TABLE DROP COLUMN 시 Oracle이 해당 인덱스를 자동 DROP하므로 메타도 동기화.

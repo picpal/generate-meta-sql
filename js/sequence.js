@@ -185,7 +185,19 @@ const SequenceTab = (() => {
     const hist = Utils.snapshotHist({ kind:'SEQUENCE', op:'D', reason, empId:emp, whereClause: whereSeq });
 
     let out = Utils.section(`시퀀스 삭제: ${schema}.${seq}`);
-    out += `-- [주의] HARD 삭제: HIST 먼저, 원본 DROP을 나중에.\n`;
+    out += `-- ═══════════════════════════════════════════════════════════════════
+-- [경고] DROP SEQUENCE — implicit commit 주의
+-- ───────────────────────────────────────────────────────────────────
+-- DROP SEQUENCE 는 DDL이며 implicit commit을 동반합니다. 본 SQL의 어느
+-- 단계가 실패해도 이미 commit된 단계는 롤백되지 않습니다.
+--
+-- 실패 발생 시 다음을 반드시 확인:
+--   1) HIST 적재 여부 (TB_META_SEQUENCE_HIST)
+--   2) 메타 DELETE 여부 (TB_META_SEQUENCE)
+--   3) Oracle 측 실제 시퀀스 잔존 여부
+-- 부정합이 발견되면 수동 cleanup으로 일관성 회복하세요.
+-- ═══════════════════════════════════════════════════════════════════
+`;
     out += Utils.section('1. 시퀀스 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
     out += Utils.section('2. 메타 DELETE') + `DELETE FROM TB_META_SEQUENCE WHERE ${whereSeq};\n`;
     out += Utils.section('3. 물리 DROP') + `DROP SEQUENCE ${schema}.${seq};\n\nCOMMIT;\n`;

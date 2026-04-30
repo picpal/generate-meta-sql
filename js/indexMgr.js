@@ -159,7 +159,19 @@ const IndexTab = (() => {
     const hist = Utils.snapshotHist({ kind:'INDEX', op:'D', reason, empId:emp, whereClause: whereIdx });
 
     let out = Utils.section(`인덱스 삭제: ${schema}.${idxName}`);
-    out += `-- [주의] HARD 삭제: HIST 먼저, 원본 DROP을 나중에.\n`;
+    out += `-- ═══════════════════════════════════════════════════════════════════
+-- [경고] DROP INDEX — implicit commit 주의
+-- ───────────────────────────────────────────────────────────────────
+-- DROP INDEX 는 DDL이며 implicit commit을 동반합니다. 본 SQL의 어느
+-- 단계가 실패해도 이미 commit된 단계는 롤백되지 않습니다.
+--
+-- 실패 발생 시 다음을 반드시 확인:
+--   1) HIST 적재 여부 (TB_META_INDEX_HIST)
+--   2) 메타 DELETE 여부 (TB_META_INDEX_COLUMN, TB_META_INDEX)
+--   3) Oracle 측 실제 인덱스 잔존 여부
+-- 부정합이 발견되면 수동 cleanup으로 일관성 회복하세요.
+-- ═══════════════════════════════════════════════════════════════════
+`;
     out += Utils.section('1. 인덱스 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
     out += Utils.section('2. 인덱스-컬럼 매핑 DELETE') + `DELETE FROM TB_META_INDEX_COLUMN
  WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE ${whereIdx});\n`;
