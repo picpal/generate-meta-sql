@@ -197,7 +197,7 @@ const TableTab = (() => {
       const type = Utils.typeDDL(c.dataType, c.dataLength, c.dataPrecision, c.dataScale);
       let line = `    ${c.colName.toUpperCase().padEnd(30)} ${type.padEnd(18)}`;
       if (c.defaultValue) line += ` DEFAULT ${c.defaultValue}`;
-      line += c.nullableYn ? '' : ' NOT NULL';
+      line += (c.pkYn ? false : c.nullableYn) ? '' : ' NOT NULL';
       return line;
     }).join(',\n');
 
@@ -263,7 +263,7 @@ const TableTab = (() => {
     ${Utils.q(c.colName.toUpperCase())}, ${i + 1},
     ${Utils.q(c.logicalName)}, ${Utils.q(c.description)},
     ${Utils.q(c.dataType)}, ${Utils.num(c.dataLength)}, ${Utils.num(c.dataPrecision)}, ${Utils.num(c.dataScale)},
-    ${Utils.yn(c.nullableYn)}, ${Utils.q(c.defaultValue)},
+    ${Utils.yn(c.pkYn ? false : c.nullableYn)}, ${Utils.q(c.defaultValue)},
     ${Utils.yn(c.pkYn)}, ${Utils.yn(c.ukYn)}, ${Utils.yn(c.fkYn)},
     ${Utils.yn(c.piiYn)}, ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, 'LOW',
     ${Utils.yn(c.encryptionYn)}, NULL, ${Utils.yn(c.maskingYn)}, ${Utils.q(c.maskingRuleCd)},
