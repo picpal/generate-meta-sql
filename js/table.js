@@ -2,6 +2,19 @@
  * 탭 1: 테이블 신규 생성 (표준 v1.0)
  * ========================================================= */
 
+// View DDL 자동 생성 시 마스킹 컬럼에 적용할 사내 표준 마스킹 함수 매핑.
+// 키는 js/codes.js의 MASKING_RULE 코드값과 일치해야 한다.
+// 매핑이 없으면 fallback으로 FN_MASK_<CODE>를 사용한다.
+const MASK_FN_MAP = {
+  'NAME':  'FN_MASK_NAME',
+  'RRN':   'FN_MASK_RRN',
+  'PHONE': 'FN_MASK_PHONE',
+  'CARD':  'FN_MASK_CARD',
+  'EMAIL': 'FN_MASK_EMAIL',
+  'ADDR':  'FN_MASK_ADDR',
+  'FULL':  'FN_MASK_FULL',
+};
+
 const TableTab = (() => {
   let colCounter = 0;
 
@@ -219,7 +232,24 @@ const TableTab = (() => {
       const vwName = (meta.viewName && meta.viewName.trim())
         ? meta.viewName.trim().toUpperCase()
         : tbl.replace(/^TB_/, 'VW_');
-      viewDdl = `CREATE OR REPLACE VIEW ${schema}.${vwName} AS\nSELECT\n${cols.map(c => '    ' + c.colName.toUpperCase()).join(',\n')}\nFROM ${schema}.${tbl};\n`;
+
+      // 컬럼별 SELECT 표현 빌드: 마스킹 지정된 컬럼은 사내 표준 마스킹 함수로 감싼다.
+      // PCI+ENC 컬럼의 복호화 함수 적용은 정책 미정 → 본 PR에서는 그대로 SELECT.
+      const viewColExpr = (c) => {
+        const col = c.colName.toUpperCase();
+        if (c.maskingYn && c.maskingRuleCd) {
+          const fn = MASK_FN_MAP[c.maskingRuleCd] || `FN_MASK_${c.maskingRuleCd}`;
+          return `    ${fn}(${col}) AS ${col}`;
+        }
+        return `    ${col}`;
+      };
+
+      const viewHeaderComment =
+        `-- [참고] 마스킹 함수(FN_MASK_*)는 사내 표준에 정의되어 있어야 합니다.\n` +
+        `-- 미정의 시 ORA-00904 'invalid identifier'. 코드값(MASKING_RULE_CD)당 함수 매핑은\n` +
+        `-- js/table.js의 MASK_FN_MAP 상수에서 관리합니다.\n`;
+
+      viewDdl = `${viewHeaderComment}CREATE OR REPLACE VIEW ${schema}.${vwName} AS\nSELECT\n${cols.map(viewColExpr).join(',\n')}\nFROM ${schema}.${tbl};\n`;
     }
 
     // TB_META_TABLE INSERT (spec 순서)
