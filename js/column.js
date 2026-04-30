@@ -66,6 +66,7 @@ const ColumnTab = (() => {
       { label:'마스킹 규칙', type:'select', name:'maskingRuleCd', id:`${prefix}-maskingRuleCd`, code:'MASKING_RULE' },
       { label:'보관주기(예외)', type:'select', name:'retentionPeriodCd', id:`${prefix}-retentionPeriodCd`, code:'RETENTION_PERIOD' },
       { label:'이용약관(예외)', name:'tosCd', id:`${prefix}-tosCd` },
+      { label:'상태', type:'select', name:'statusCd', id:`${prefix}-statusCd`, code:'STATUS' },
     );
     return arr;
   }
@@ -127,7 +128,7 @@ const ColumnTab = (() => {
     'nullableYn','defaultValue','description',
     'piiYn','pciYn','pciCategoryCd','sensitivityCd',
     'encryptionYn','encryptionAlg','maskingYn','maskingRuleCd',
-    'retentionPeriodCd','tosCd',
+    'retentionPeriodCd','tosCd','statusCd',
   ];
 
   function generate() {
@@ -272,6 +273,7 @@ const ColumnTab = (() => {
       setIfTouched('MASKING_RULE_CD',     'maskingRuleCd',     Utils.q(c.maskingRuleCd)),
       setIfTouched('RETENTION_PERIOD_CD', 'retentionPeriodCd', Utils.q(c.retentionPeriodCd)),
       setIfTouched('TOS_CD',              'tosCd',             Utils.q(c.tosCd)),
+      c.statusCd ? `STATUS_CD = ${Utils.q(c.statusCd)}` : null,
       Utils.auditCols(emp).update,
     ].filter(Boolean).join(',\n       ');
 
