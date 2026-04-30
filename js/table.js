@@ -125,7 +125,7 @@ const TableTab = (() => {
       <td class="flag-cell"><input type="checkbox" name="encryptionYn"></td>
       <td class="flag-cell"><input type="checkbox" name="maskingYn"></td>
       <td><select name="maskingRuleCd">${Utils.buildOptions('MASKING_RULE', true)}</select></td>
-      <td><input type="text" name="defaultValue"></td>
+      <td><input type="text" name="defaultValue" placeholder="'N' / 0 / SYSDATE" title="Oracle DDL DEFAULT 절에 들어갈 SQL 표현식 그대로. 문자열은 작은따옴표 포함, 숫자는 그대로, 함수는 SYSDATE/SYSTIMESTAMP 등."></td>
       <td><input type="text" name="description"></td>
       <td><button type="button" class="row-del" title="삭제">×</button></td>
     `;
