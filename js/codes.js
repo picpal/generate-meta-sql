@@ -57,8 +57,6 @@ const CODES = {
     { value: 'NORMAL',   name: 'NORMAL' },
     { value: 'UNIQUE',   name: 'UNIQUE' },
     { value: 'BITMAP',   name: 'BITMAP' },
-    { value: 'FUNCTION', name: 'FUNCTION-BASED' },
-    { value: 'REVERSE',  name: 'REVERSE KEY' },
   ],
 
   // 인덱스 생성 목적

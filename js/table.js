@@ -92,9 +92,9 @@ const TableTab = (() => {
     `;
     document.getElementById('tbl-add-col').addEventListener('click', () => addColumnRow());
     document.getElementById('tbl-add-audit').addEventListener('click', () => {
-      addColumnRow({ colName: 'CREATED_BY', dataType: 'VARCHAR2', dataLength: 20, nullableYn: false });
+      addColumnRow({ colName: 'CREATED_BY', dataType: 'VARCHAR2', dataLength: 128, nullableYn: false });
       addColumnRow({ colName: 'CREATED_AT', dataType: 'TIMESTAMP', nullableYn: false });
-      addColumnRow({ colName: 'UPDATED_BY', dataType: 'VARCHAR2', dataLength: 20, nullableYn: false });
+      addColumnRow({ colName: 'UPDATED_BY', dataType: 'VARCHAR2', dataLength: 128, nullableYn: false });
       addColumnRow({ colName: 'UPDATED_AT', dataType: 'TIMESTAMP', nullableYn: false });
     });
     document.getElementById('tbl-add-pk').addEventListener('click', () => {
