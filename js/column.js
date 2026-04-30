@@ -259,6 +259,9 @@ const ColumnTab = (() => {
       setIfTouched('DATA_SCALE',          'dataScale',         Utils.num(c.dataScale)),
       `NULLABLE_YN = ${Utils.yn(c.nullableYn)}`,
       setIfTouched('DEFAULT_VALUE',       'defaultValue',      Utils.q(c.defaultValue)),
+      setIfTouched('PK_YN',               'pkYn',              Utils.yn(c.pkYn)),
+      setIfTouched('UK_YN',               'ukYn',              Utils.yn(c.ukYn)),
+      setIfTouched('FK_YN',               'fkYn',              Utils.yn(c.fkYn)),
       `PII_YN = ${Utils.yn(c.piiYn)}`,
       `PCI_YN = ${Utils.yn(c.pciYn)}`,
       setIfTouched('PCI_CATEGORY_CD',     'pciCategoryCd',     Utils.q(c.pciCategoryCd)),
@@ -283,7 +286,16 @@ const ColumnTab = (() => {
       whereClause: `TABLE_ID = ${tableIdRef} AND COLUMN_NAME = ${Utils.q(col)}`,
     });
 
+    const tblBase = tbl.replace(/^TB_/, '');
+    const constraints = [];
+    if (c.pkYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT PK_${tblBase} PRIMARY KEY (${col});`);
+    else        constraints.push(`-- TODO: PK 해제 시 DROP CONSTRAINT 수동 보완 — 예) ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT PK_${tblBase};`);
+    if (c.ukYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT UK_${tblBase}_${col} UNIQUE (${col});`);
+    else        constraints.push(`-- TODO: UK 해제 시 DROP CONSTRAINT 수동 보완 — 예) ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT UK_${tblBase}_${col};`);
+    constraints.push(`-- TODO: FK 변경 — ON이면 ADD CONSTRAINT FK_<NAME> FOREIGN KEY (${col}) REFERENCES <REF_TBL>(<REF_COL>); OFF면 DROP CONSTRAINT FK_<NAME>; (현재 ${c.fkYn ? 'ON' : 'OFF'} 의도)`);
+
     let out = Utils.section(`컬럼 변경: ${schema}.${tbl}.${col}`) + ddl;
+    out += Utils.section('제약조건 변경 (PK/UK/FK)') + constraints.join('\n') + '\n';
     out += Utils.section('메타 UPDATE') + update + '\n';
     out += Utils.section('컬럼 HIST INSERT (U, 변경 후 스냅샷)') + hist + '\n\nCOMMIT;\n';
     Utils.setOutput('col-output', out);
