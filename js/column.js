@@ -11,6 +11,28 @@ const ColumnTab = (() => {
     UI.initSectionToggles(document.getElementById('col-tab'));
   }
 
+  /**
+   * MODIFY 입력 요소의 사용자 명시적 수정 여부 추적.
+   * - 사용자가 한 번이라도 값을 만지면 dataset.touched = '1'.
+   * - genModify() SET 절에서 touched 인 경우에만 컬럼을 포함, touched && empty 시 NULL 명시.
+   */
+  function bindModifyTouchTracking() {
+    const root = document.getElementById('col-mod');
+    if (!root) return;
+    root.querySelectorAll('input, select, textarea').forEach(el => {
+      // 다중 호출 시 중복 부착 방지
+      if (el.dataset.touchBound === '1') return;
+      el.dataset.touchBound = '1';
+      const evt = (el.tagName === 'SELECT' || el.type === 'checkbox') ? 'change' : 'input';
+      el.addEventListener(evt, () => { el.dataset.touched = '1'; }, { once: true });
+    });
+  }
+
+  function isTouched(prefix, field) {
+    const el = document.getElementById(`${prefix}-${field}`);
+    return !!(el && el.dataset.touched === '1');
+  }
+
   function tblPickerFields(prefix) {
     return [
       { label:'스키마명', req:true, name:'schema', id:`${prefix}-schema` },
@@ -66,6 +88,7 @@ const ColumnTab = (() => {
     UI.renderFields(wrap, colFields('col-mod', false));
     const allWithId = document.querySelectorAll('#col-mod [id="col-mod-colName"]');
     if (allWithId.length > 1) allWithId[1].closest('.field').remove();
+    bindModifyTouchTracking();
   }
 
   function renderDrop() {
@@ -206,25 +229,30 @@ const ColumnTab = (() => {
     ddl += ');\n';
     if (c.logicalName) ddl += `COMMENT ON COLUMN ${schema}.${tbl}.${col} IS ${Utils.q(c.logicalName)};\n`;
 
+    // touched 인 경우에만 SET 포함. Utils.q('') === 'NULL' 이므로
+    // touched && empty 시 'COL = NULL' 이 자연스럽게 출력되어 빈 값으로 비울 수 있음.
+    const setIfTouched = (col, field, valExpr) =>
+      isTouched('col-mod', field) ? `${col} = ${valExpr}` : null;
+
     const sets = [
-      c.logicalName ? `LOGICAL_NAME = ${Utils.q(c.logicalName)}` : null,
-      c.description ? `DESCRIPTION = ${Utils.q(c.description)}` : null,
-      c.dataType    ? `DATA_TYPE = ${Utils.q(c.dataType)}` : null,
-      `DATA_LENGTH = ${Utils.num(c.dataLength)}`,
-      `DATA_PRECISION = ${Utils.num(c.dataPrecision)}`,
-      `DATA_SCALE = ${Utils.num(c.dataScale)}`,
+      setIfTouched('LOGICAL_NAME',        'logicalName',       Utils.q(c.logicalName)),
+      setIfTouched('DESCRIPTION',         'description',       Utils.q(c.description)),
+      setIfTouched('DATA_TYPE',           'dataType',          Utils.q(c.dataType)),
+      setIfTouched('DATA_LENGTH',         'dataLength',        Utils.num(c.dataLength)),
+      setIfTouched('DATA_PRECISION',      'dataPrecision',     Utils.num(c.dataPrecision)),
+      setIfTouched('DATA_SCALE',          'dataScale',         Utils.num(c.dataScale)),
       `NULLABLE_YN = ${Utils.yn(c.nullableYn)}`,
-      `DEFAULT_VALUE = ${Utils.q(c.defaultValue)}`,
+      setIfTouched('DEFAULT_VALUE',       'defaultValue',      Utils.q(c.defaultValue)),
       `PII_YN = ${Utils.yn(c.piiYn)}`,
       `PCI_YN = ${Utils.yn(c.pciYn)}`,
-      `PCI_CATEGORY_CD = ${Utils.q(c.pciCategoryCd)}`,
+      setIfTouched('PCI_CATEGORY_CD',     'pciCategoryCd',     Utils.q(c.pciCategoryCd)),
       `SENSITIVITY_CD = ${Utils.q(c.sensitivityCd || 'LOW')}`,
       `ENCRYPTION_YN = ${Utils.yn(c.encryptionYn)}`,
-      `ENCRYPTION_ALG = ${Utils.q(c.encryptionAlg)}`,
+      setIfTouched('ENCRYPTION_ALG',      'encryptionAlg',     Utils.q(c.encryptionAlg)),
       `MASKING_YN = ${Utils.yn(c.maskingYn)}`,
-      `MASKING_RULE_CD = ${Utils.q(c.maskingRuleCd)}`,
-      `RETENTION_PERIOD_CD = ${Utils.q(c.retentionPeriodCd)}`,
-      `TOS_CD = ${Utils.q(c.tosCd)}`,
+      setIfTouched('MASKING_RULE_CD',     'maskingRuleCd',     Utils.q(c.maskingRuleCd)),
+      setIfTouched('RETENTION_PERIOD_CD', 'retentionPeriodCd', Utils.q(c.retentionPeriodCd)),
+      setIfTouched('TOS_CD',              'tosCd',             Utils.q(c.tosCd)),
       Utils.auditCols(emp).update,
     ].filter(Boolean).join(',\n       ');
 
