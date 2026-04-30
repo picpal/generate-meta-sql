@@ -3,16 +3,19 @@
 -- 실행 순서: 3 / 3
 -- 선행: 02_common_code.sql
 -- 후행: (없음 — 이후 비즈니스 메타 수기 UPDATE)
--- 출처: DB_메타정보_관리체계_표준설계.md §7 (7.1~7.5)
+-- 출처: DB_메타정보_관리체계_표준설계.md §7 (7.1~7.5) + 부록 B
 -- 사전 수정 필요: WHERE OWNER IN ('SVC1','SVC2', ...) 의 스키마 목록을
 --               실제 대상 스키마로 교체한 뒤 실행
--- 구성: 7.x 본 적재 → 7.5.x HIST 적재 를 테이블 단위로 번갈아 실행하여
---       동일 트랜잭션으로 묶고, 마지막에 일괄 COMMIT.
+-- 구성: 7.x 본 적재 → (필요 시 LONG 후처리) → 7.5.x HIST 적재 를 테이블
+--       단위로 번갈아 실행하여 동일 트랜잭션으로 묶고, 마지막에 일괄 COMMIT.
 -- HIST 고정값: HIST_TYPE='I', HIST_BY=USER, CHANGE_REASON='INITIAL_LOAD'
+-- 재실행 안전성: 본 INSERT는 NOT EXISTS 가드, HIST INSERT는
+--                ('I','INITIAL_LOAD') 중복 가드로 누적 중복을 방지한다.
 -- =====================================================================
 
 -- =====================================================================
 -- §7.1 TB_META_TABLE — 테이블 적재
+--   필터: BIN$%(휴지통), TB_META_%(자기 자신), GTT, NESTED, IOT 부속
 -- =====================================================================
 INSERT INTO TB_META_TABLE (
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
@@ -38,11 +41,19 @@ FROM ALL_TABLES t
 LEFT JOIN ALL_TAB_COMMENTS c
        ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
 WHERE t.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
-  AND t.TABLE_NAME NOT LIKE 'BIN$%'       -- recycle bin 제외
-  AND t.TABLE_NAME NOT LIKE 'TB_META_%'   -- 자기 자신 제외
+  AND t.TABLE_NAME NOT LIKE 'BIN$%'        -- recycle bin 제외
+  AND t.TABLE_NAME NOT LIKE 'TB_META_%'    -- 자기 자신 제외
+  AND t.TEMPORARY = 'N'                    -- GTT 제외
+  AND t.NESTED    = 'NO'                   -- nested table 제외
+  AND t.IOT_TYPE IS NULL                   -- IOT overflow segment 제외
+  AND NOT EXISTS (                         -- 재실행 시 중복 방지
+        SELECT 1 FROM TB_META_TABLE m
+         WHERE m.SCHEMA_NAME = t.OWNER
+           AND m.TABLE_NAME  = t.TABLE_NAME
+      )
 ;
 
--- §7.5.1 TB_META_TABLE_HIST — 방금 적재한 TB_META_TABLE 전체를 HIST 스냅샷
+-- §7.5.1 TB_META_TABLE_HIST — 'I'/'INITIAL_LOAD' 미존재 행만 적재
 INSERT INTO TB_META_TABLE_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
@@ -54,17 +65,25 @@ INSERT INTO TB_META_TABLE_HIST (
 )
 SELECT
     SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, USER, 'INITIAL_LOAD',
-    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
-    TABLE_TYPE_CD, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
-    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
-    PII_YN, PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
-    STATUS_CD, REMARK,
-    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-FROM TB_META_TABLE
+    t.TABLE_ID, t.SCHEMA_NAME, t.TABLE_NAME, t.LOGICAL_NAME, t.DESCRIPTION,
+    t.TABLE_TYPE_CD, t.SERVICE_CD, t.OWNER_EMP_ID, t.SECONDARY_EMP_ID,
+    t.KEY_TABLE_YN, t.ISOLATION_YN, t.ISOLATION_LEVEL_CD,
+    t.PII_YN, t.PCI_YN, t.RETENTION_PERIOD_CD, t.RETENTION_BASIS, t.TOS_CD,
+    t.STATUS_CD, t.REMARK,
+    t.CREATED_BY, t.CREATED_AT, t.UPDATED_BY, t.UPDATED_AT
+FROM TB_META_TABLE t
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_TABLE_HIST h
+     WHERE h.TABLE_ID      = t.TABLE_ID
+       AND h.HIST_TYPE     = 'I'
+       AND h.CHANGE_REASON = 'INITIAL_LOAD'
+)
 ;
 
 -- =====================================================================
 -- §7.2 TB_META_COLUMN — 컬럼 적재
+--   ENCRYPTION 정보는 ALL_ENCRYPTED_COLUMNS LEFT JOIN으로 보정
+--   PK 판별은 CONSTRAINT_TYPE='P', UK는 'U', FK는 'R'
 -- =====================================================================
 INSERT INTO TB_META_COLUMN (
     COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
@@ -73,7 +92,7 @@ INSERT INTO TB_META_COLUMN (
     NULLABLE_YN, DEFAULT_VALUE,
     PK_YN, UK_YN, FK_YN,
     PII_YN, PCI_YN, SENSITIVITY_CD,
-    ENCRYPTION_YN, MASKING_YN,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN,
     STATUS_CD, CREATED_BY, UPDATED_BY
 )
 SELECT
@@ -85,12 +104,14 @@ SELECT
     cc.COMMENTS,
     tc.DATA_TYPE, tc.DATA_LENGTH, tc.DATA_PRECISION, tc.DATA_SCALE,
     CASE tc.NULLABLE WHEN 'Y' THEN 'Y' ELSE 'N' END,
-    SUBSTR(tc.DATA_DEFAULT, 1, 500),
+    NULL,  -- DATA_DEFAULT는 LONG → 아래 PL/SQL 후처리에서 적재
     NVL2(pk.COLUMN_NAME,'Y','N'),
     NVL2(uk.COLUMN_NAME,'Y','N'),
     NVL2(fk.COLUMN_NAME,'Y','N'),
     'N','N','LOW',
-    'N','N',
+    NVL2(ec.COLUMN_NAME,'Y','N'),
+    ec.ENCRYPTION_ALG,
+    'N',
     'ACTIVE', USER, USER
 FROM ALL_TAB_COLUMNS tc
 JOIN TB_META_TABLE mt
@@ -98,27 +119,81 @@ JOIN TB_META_TABLE mt
 LEFT JOIN ALL_COL_COMMENTS cc
       ON cc.OWNER = tc.OWNER AND cc.TABLE_NAME = tc.TABLE_NAME AND cc.COLUMN_NAME = tc.COLUMN_NAME
 LEFT JOIN (
-    SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
+    SELECT DISTINCT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
       FROM ALL_CONSTRAINTS ac
       JOIN ALL_CONS_COLUMNS acc
         ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME
      WHERE ac.CONSTRAINT_TYPE = 'P'
+       AND ac.STATUS = 'ENABLED'
 ) pk ON pk.OWNER = tc.OWNER AND pk.TABLE_NAME = tc.TABLE_NAME AND pk.COLUMN_NAME = tc.COLUMN_NAME
 LEFT JOIN (
-    SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
+    SELECT DISTINCT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
       FROM ALL_CONSTRAINTS ac
       JOIN ALL_CONS_COLUMNS acc
         ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME
      WHERE ac.CONSTRAINT_TYPE = 'U'
+       AND ac.STATUS = 'ENABLED'
 ) uk ON uk.OWNER = tc.OWNER AND uk.TABLE_NAME = tc.TABLE_NAME AND uk.COLUMN_NAME = tc.COLUMN_NAME
 LEFT JOIN (
-    SELECT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
+    SELECT DISTINCT acc.OWNER, acc.TABLE_NAME, acc.COLUMN_NAME
       FROM ALL_CONSTRAINTS ac
       JOIN ALL_CONS_COLUMNS acc
         ON ac.OWNER = acc.OWNER AND ac.CONSTRAINT_NAME = acc.CONSTRAINT_NAME
      WHERE ac.CONSTRAINT_TYPE = 'R'
+       AND ac.STATUS = 'ENABLED'
 ) fk ON fk.OWNER = tc.OWNER AND fk.TABLE_NAME = tc.TABLE_NAME AND fk.COLUMN_NAME = tc.COLUMN_NAME
+LEFT JOIN ALL_ENCRYPTED_COLUMNS ec
+      ON ec.OWNER = tc.OWNER AND ec.TABLE_NAME = tc.TABLE_NAME AND ec.COLUMN_NAME = tc.COLUMN_NAME
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_COLUMN m
+     WHERE m.TABLE_ID    = mt.TABLE_ID
+       AND m.COLUMN_NAME = tc.COLUMN_NAME
+)
 ;
+
+-- DATA_DEFAULT 후처리: LONG → VARCHAR2 변환 + BULK 업데이트 (부록 B)
+DECLARE
+    TYPE t_id_arr  IS TABLE OF TB_META_COLUMN.COLUMN_ID%TYPE;
+    TYPE t_def_arr IS TABLE OF TB_META_COLUMN.DEFAULT_VALUE%TYPE;
+    v_ids  t_id_arr  := t_id_arr();
+    v_defs t_def_arr := t_def_arr();
+    v_default LONG;
+BEGIN
+    FOR r IN (
+        SELECT mc.COLUMN_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mc.COLUMN_NAME
+          FROM TB_META_COLUMN mc
+          JOIN TB_META_TABLE  mt ON mt.TABLE_ID = mc.TABLE_ID
+         WHERE mc.DEFAULT_VALUE IS NULL
+    ) LOOP
+        BEGIN
+            SELECT DATA_DEFAULT
+              INTO v_default
+              FROM ALL_TAB_COLUMNS
+             WHERE OWNER       = r.SCHEMA_NAME
+               AND TABLE_NAME  = r.TABLE_NAME
+               AND COLUMN_NAME = r.COLUMN_NAME;
+            IF v_default IS NOT NULL THEN
+                v_ids.EXTEND;  v_ids(v_ids.LAST)   := r.COLUMN_ID;
+                v_defs.EXTEND; v_defs(v_defs.LAST) := SUBSTR(v_default, 1, 500);
+            END IF;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN NULL;
+        END;
+    END LOOP;
+
+    IF v_ids.COUNT > 0 THEN
+        FORALL i IN 1 .. v_ids.COUNT
+            UPDATE TB_META_COLUMN
+               SET DEFAULT_VALUE = v_defs(i),
+                   UPDATED_BY    = 'INITIAL_LOAD',
+                   UPDATED_AT    = SYSTIMESTAMP
+             WHERE COLUMN_ID = v_ids(i);
+    END IF;
+END;
+/
+-- 주의: 이 블록은 §7.5.2 HIST 적재 이전에 실행되므로
+--       §6.8의 'U' HIST 인라인 INSERT는 불필요(직후 'I' 스냅샷에 최종값 포함).
+--       운영 중 단독 실행 시에는 'U' HIST 인라인 INSERT를 추가해야 한다.
 
 -- §7.5.2 TB_META_COLUMN_HIST
 INSERT INTO TB_META_COLUMN_HIST (
@@ -135,16 +210,22 @@ INSERT INTO TB_META_COLUMN_HIST (
 )
 SELECT
     SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, USER, 'INITIAL_LOAD',
-    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
-    LOGICAL_NAME, DESCRIPTION,
-    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
-    NULLABLE_YN, DEFAULT_VALUE,
-    PK_YN, UK_YN, FK_YN,
-    PII_YN, PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
-    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
-    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
-    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-FROM TB_META_COLUMN
+    c.COLUMN_ID, c.TABLE_ID, c.COLUMN_NAME, c.COLUMN_ORDER,
+    c.LOGICAL_NAME, c.DESCRIPTION,
+    c.DATA_TYPE, c.DATA_LENGTH, c.DATA_PRECISION, c.DATA_SCALE,
+    c.NULLABLE_YN, c.DEFAULT_VALUE,
+    c.PK_YN, c.UK_YN, c.FK_YN,
+    c.PII_YN, c.PCI_YN, c.PCI_CATEGORY_CD, c.SENSITIVITY_CD,
+    c.ENCRYPTION_YN, c.ENCRYPTION_ALG, c.MASKING_YN, c.MASKING_RULE_CD,
+    c.RETENTION_PERIOD_CD, c.TOS_CD, c.STATUS_CD, c.REMARK,
+    c.CREATED_BY, c.CREATED_AT, c.UPDATED_BY, c.UPDATED_AT
+FROM TB_META_COLUMN c
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_COLUMN_HIST h
+     WHERE h.COLUMN_ID     = c.COLUMN_ID
+       AND h.HIST_TYPE     = 'I'
+       AND h.CHANGE_REASON = 'INITIAL_LOAD'
+)
 ;
 
 -- =====================================================================
@@ -152,6 +233,8 @@ FROM TB_META_COLUMN
 -- =====================================================================
 
 -- §7.3.1 TB_META_INDEX — 헤더
+--   INDEX_TYPE_CD: BITMAP/FUNCTION/REVERSE 우선, 그 다음 UNIQUE, 그 외 NORMAL
+--   PURPOSE_CD: PK 제약 매칭 시 'PK', 그 외 'SEARCH'
 INSERT INTO TB_META_INDEX (
     INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
     TABLESPACE_NAME, PURPOSE_CD, STATUS_CD,
@@ -162,18 +245,29 @@ SELECT
     mt.TABLE_ID,
     i.INDEX_NAME,
     CASE
-      WHEN i.UNIQUENESS = 'UNIQUE' THEN 'UNIQUE'
-      WHEN i.INDEX_TYPE = 'BITMAP' THEN 'BITMAP'
-      WHEN i.INDEX_TYPE LIKE 'FUNCTION%' THEN 'FUNCTION'
+      WHEN i.INDEX_TYPE = 'BITMAP'                 THEN 'BITMAP'
+      WHEN i.INDEX_TYPE LIKE 'FUNCTION-BASED%'     THEN 'FUNCTION'
+      WHEN i.INDEX_TYPE = 'NORMAL/REV'             THEN 'REVERSE'
+      WHEN i.UNIQUENESS = 'UNIQUE'                 THEN 'UNIQUE'
       ELSE 'NORMAL'
     END,
     i.TABLESPACE_NAME,
-    CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'PK' ELSE 'SEARCH' END,  -- 초기 추정값
+    CASE WHEN pkc.CONSTRAINT_TYPE = 'P' THEN 'PK' ELSE 'SEARCH' END,
     'ACTIVE', USER, USER
 FROM ALL_INDEXES i
 JOIN TB_META_TABLE mt
       ON mt.SCHEMA_NAME = i.TABLE_OWNER AND mt.TABLE_NAME = i.TABLE_NAME
+LEFT JOIN ALL_CONSTRAINTS pkc
+       ON pkc.OWNER          = i.TABLE_OWNER
+      AND pkc.INDEX_NAME     = i.INDEX_NAME
+      AND pkc.CONSTRAINT_TYPE = 'P'
+      AND pkc.STATUS          = 'ENABLED'
 WHERE i.TABLE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+  AND NOT EXISTS (
+        SELECT 1 FROM TB_META_INDEX m
+         WHERE m.TABLE_ID   = mt.TABLE_ID
+           AND m.INDEX_NAME = i.INDEX_NAME
+      )
 ;
 
 -- §7.5.3 TB_META_INDEX_HIST
@@ -187,12 +281,18 @@ INSERT INTO TB_META_INDEX_HIST (
 )
 SELECT
     SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, USER, 'INITIAL_LOAD',
-    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
-    TABLESPACE_NAME, INITRANS, PCTFREE,
-    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL,
-    STATUS_CD,
-    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-FROM TB_META_INDEX
+    x.INDEX_ID, x.TABLE_ID, x.INDEX_NAME, x.INDEX_TYPE_CD,
+    x.TABLESPACE_NAME, x.INITRANS, x.PCTFREE,
+    x.PURPOSE_CD, x.PERFORMANCE_NOTE, x.CREATE_DDL,
+    x.STATUS_CD,
+    x.CREATED_BY, x.CREATED_AT, x.UPDATED_BY, x.UPDATED_AT
+FROM TB_META_INDEX x
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_INDEX_HIST h
+     WHERE h.INDEX_ID      = x.INDEX_ID
+       AND h.HIST_TYPE     = 'I'
+       AND h.CHANGE_REASON = 'INITIAL_LOAD'
+)
 ;
 
 -- §7.3.2 TB_META_INDEX_COLUMN — 컬럼
@@ -204,7 +304,58 @@ JOIN TB_META_TABLE mt
 JOIN TB_META_INDEX mi
   ON mi.TABLE_ID = mt.TABLE_ID AND mi.INDEX_NAME = ic.INDEX_NAME
 WHERE ic.TABLE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+  AND NOT EXISTS (
+        SELECT 1 FROM TB_META_INDEX_COLUMN m
+         WHERE m.INDEX_ID   = mi.INDEX_ID
+           AND m.COLUMN_POS = ic.COLUMN_POSITION
+      )
 ;
+
+-- 함수기반 인덱스 표현식 후처리: ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION이 LONG
+-- 일반 컬럼 인덱스 행은 ALL_IND_EXPRESSIONS에 매칭이 없어 NO_DATA_FOUND로 무시됨
+DECLARE
+    TYPE t_id_arr   IS TABLE OF TB_META_INDEX_COLUMN.INDEX_ID%TYPE;
+    TYPE t_pos_arr  IS TABLE OF TB_META_INDEX_COLUMN.COLUMN_POS%TYPE;
+    TYPE t_expr_arr IS TABLE OF TB_META_INDEX_COLUMN.FUNC_EXPRESSION%TYPE;
+    v_ids   t_id_arr   := t_id_arr();
+    v_poss  t_pos_arr  := t_pos_arr();
+    v_exprs t_expr_arr := t_expr_arr();
+    v_expr  LONG;
+BEGIN
+    FOR r IN (
+        SELECT mic.INDEX_ID, mic.COLUMN_POS,
+               mi.INDEX_NAME, mt.SCHEMA_NAME
+          FROM TB_META_INDEX_COLUMN mic
+          JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
+          JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+         WHERE mic.FUNC_EXPRESSION IS NULL
+    ) LOOP
+        BEGIN
+            SELECT COLUMN_EXPRESSION
+              INTO v_expr
+              FROM ALL_IND_EXPRESSIONS
+             WHERE INDEX_OWNER     = r.SCHEMA_NAME
+               AND INDEX_NAME      = r.INDEX_NAME
+               AND COLUMN_POSITION = r.COLUMN_POS;
+            IF v_expr IS NOT NULL THEN
+                v_ids.EXTEND;   v_ids(v_ids.LAST)     := r.INDEX_ID;
+                v_poss.EXTEND;  v_poss(v_poss.LAST)   := r.COLUMN_POS;
+                v_exprs.EXTEND; v_exprs(v_exprs.LAST) := SUBSTR(v_expr, 1, 2000);
+            END IF;
+        EXCEPTION
+            WHEN NO_DATA_FOUND THEN NULL;
+        END;
+    END LOOP;
+
+    IF v_ids.COUNT > 0 THEN
+        FORALL i IN 1 .. v_ids.COUNT
+            UPDATE TB_META_INDEX_COLUMN
+               SET FUNC_EXPRESSION = v_exprs(i)
+             WHERE INDEX_ID   = v_ids(i)
+               AND COLUMN_POS = v_poss(i);
+    END IF;
+END;
+/
 
 -- §7.5.4 TB_META_INDEX_COLUMN_HIST
 INSERT INTO TB_META_INDEX_COLUMN_HIST (
@@ -213,29 +364,43 @@ INSERT INTO TB_META_INDEX_COLUMN_HIST (
 )
 SELECT
     SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, USER, 'INITIAL_LOAD',
-    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
-FROM TB_META_INDEX_COLUMN
+    ic.INDEX_ID, ic.COLUMN_POS, ic.COLUMN_NAME, ic.SORT_ORDER, ic.FUNC_EXPRESSION
+FROM TB_META_INDEX_COLUMN ic
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_INDEX_COLUMN_HIST h
+     WHERE h.INDEX_ID      = ic.INDEX_ID
+       AND h.COLUMN_POS    = ic.COLUMN_POS
+       AND h.HIST_TYPE     = 'I'
+       AND h.CHANGE_REASON = 'INITIAL_LOAD'
+)
 ;
 
 -- =====================================================================
 -- §7.4 TB_META_SEQUENCE — 시퀀스 적재
+--   START_WITH는 ALL_SEQUENCES에 직접 컬럼이 없어 LAST_NUMBER로 근사
+--   (현재 다음 호출 시 반환할 값의 캐시 단위 반올림값)
 -- =====================================================================
 INSERT INTO TB_META_SEQUENCE (
     SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
-    MIN_VALUE, MAX_VALUE, INCREMENT_BY, CACHE_SIZE,
+    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
     CYCLE_YN, ORDER_YN, PURPOSE_CD, STATUS_CD,
     CREATED_BY, UPDATED_BY
 )
 SELECT
     SEQ_META_SEQUENCE_ID.NEXTVAL,
-    SEQUENCE_OWNER, SEQUENCE_NAME,
-    MIN_VALUE, MAX_VALUE, INCREMENT_BY, CACHE_SIZE,
-    CASE CYCLE_FLAG WHEN 'Y' THEN 'Y' ELSE 'N' END,
-    CASE ORDER_FLAG WHEN 'Y' THEN 'Y' ELSE 'N' END,
+    s.SEQUENCE_OWNER, s.SEQUENCE_NAME,
+    s.MIN_VALUE, s.MAX_VALUE, s.INCREMENT_BY, s.LAST_NUMBER, s.CACHE_SIZE,
+    CASE s.CYCLE_FLAG WHEN 'Y' THEN 'Y' ELSE 'N' END,
+    CASE s.ORDER_FLAG WHEN 'Y' THEN 'Y' ELSE 'N' END,
     'ETC',                    -- 용도는 담당자 업데이트
     'ACTIVE', USER, USER
-FROM ALL_SEQUENCES
-WHERE SEQUENCE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+FROM ALL_SEQUENCES s
+WHERE s.SEQUENCE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+  AND NOT EXISTS (
+        SELECT 1 FROM TB_META_SEQUENCE m
+         WHERE m.SCHEMA_NAME   = s.SEQUENCE_OWNER
+           AND m.SEQUENCE_NAME = s.SEQUENCE_NAME
+      )
 ;
 
 -- §7.5.5 TB_META_SEQUENCE_HIST
@@ -249,12 +414,18 @@ INSERT INTO TB_META_SEQUENCE_HIST (
 )
 SELECT
     SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, USER, 'INITIAL_LOAD',
-    SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
-    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
-    CYCLE_YN, ORDER_YN, PURPOSE_CD,
-    USED_FOR_TABLE, USED_FOR_COLUMN, CREATE_DDL, STATUS_CD,
-    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-FROM TB_META_SEQUENCE
+    q.SEQUENCE_ID, q.SCHEMA_NAME, q.SEQUENCE_NAME,
+    q.MIN_VALUE, q.MAX_VALUE, q.INCREMENT_BY, q.START_WITH, q.CACHE_SIZE,
+    q.CYCLE_YN, q.ORDER_YN, q.PURPOSE_CD,
+    q.USED_FOR_TABLE, q.USED_FOR_COLUMN, q.CREATE_DDL, q.STATUS_CD,
+    q.CREATED_BY, q.CREATED_AT, q.UPDATED_BY, q.UPDATED_AT
+FROM TB_META_SEQUENCE q
+WHERE NOT EXISTS (
+    SELECT 1 FROM TB_META_SEQUENCE_HIST h
+     WHERE h.SEQUENCE_ID   = q.SEQUENCE_ID
+       AND h.HIST_TYPE     = 'I'
+       AND h.CHANGE_REASON = 'INITIAL_LOAD'
+)
 ;
 
 COMMIT;
