@@ -29,6 +29,9 @@ const ColumnTab = (() => {
       { label:'길이', type:'number', name:'dataLength', id:`${prefix}-dataLength` },
       { label:'정밀도', type:'number', name:'dataPrecision', id:`${prefix}-dataPrecision` },
       { label:'소수 자릿수', type:'number', name:'dataScale', id:`${prefix}-dataScale` },
+      { type:'check', name:'pkYn', id:`${prefix}-pkYn`, label:'PK' },
+      { type:'check', name:'ukYn', id:`${prefix}-ukYn`, label:'UK' },
+      { type:'check', name:'fkYn', id:`${prefix}-fkYn`, label:'FK' },
       { type:'check', name:'nullableYn', id:`${prefix}-nullableYn`, label:'NULL 허용' },
       { label:'기본값', name:'defaultValue', id:`${prefix}-defaultValue` },
       { label:'설명', name:'description', id:`${prefix}-description`, full:true },
@@ -97,6 +100,7 @@ const ColumnTab = (() => {
 
   const COL_FIELDS = [
     'colName','logicalName','columnOrder','dataType','dataLength','dataPrecision','dataScale',
+    'pkYn','ukYn','fkYn',
     'nullableYn','defaultValue','description',
     'piiYn','pciYn','pciCategoryCd','sensitivityCd',
     'encryptionYn','encryptionAlg','maskingYn','maskingRuleCd',
@@ -138,6 +142,11 @@ const ColumnTab = (() => {
     ddl += ');\n';
     if (c.logicalName) ddl += `COMMENT ON COLUMN ${schema}.${tbl}.${col} IS ${Utils.q(c.logicalName)};\n`;
 
+    const constraints = [];
+    if (c.pkYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT PK_${tbl.replace(/^TB_/,'')} PRIMARY KEY (${col});`);
+    if (c.ukYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT UK_${tbl.replace(/^TB_/,'')}_${col} UNIQUE (${col});`);
+    if (c.fkYn) constraints.push(`-- TODO: FK_YN 체크 — 참조 테이블/컬럼 정보를 입력하여 ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT FK_${tbl.replace(/^TB_/,'')}_${col} FOREIGN KEY (${col}) REFERENCES …; 를 추가하세요.`);
+
     const tableIdRef = buildTableIdRef(schema, tbl);
     const orderExpr = c.columnOrder
       ? Utils.num(c.columnOrder)
@@ -161,7 +170,7 @@ const ColumnTab = (() => {
     ${Utils.q(c.logicalName)}, ${Utils.q(c.description)},
     ${Utils.q(c.dataType)}, ${Utils.num(c.dataLength)}, ${Utils.num(c.dataPrecision)}, ${Utils.num(c.dataScale)},
     ${Utils.yn(c.nullableYn)}, ${Utils.q(c.defaultValue)},
-    'N', 'N', 'N',
+    ${Utils.yn(c.pkYn)}, ${Utils.yn(c.ukYn)}, ${Utils.yn(c.fkYn)},
     ${Utils.yn(c.piiYn)}, ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, ${Utils.q(c.sensitivityCd || 'LOW')},
     ${Utils.yn(c.encryptionYn)}, ${Utils.q(c.encryptionAlg)}, ${Utils.yn(c.maskingYn)}, ${Utils.q(c.maskingRuleCd)},
     ${Utils.q(c.retentionPeriodCd)}, ${Utils.q(c.tosCd)},
@@ -175,6 +184,7 @@ const ColumnTab = (() => {
     });
 
     let out = Utils.section(`컬럼 추가: ${schema}.${tbl}.${col}`) + ddl;
+    if (constraints.length) out += Utils.section('추가 제약 DDL (PK/UK/FK)') + constraints.join('\n') + '\n';
     out += Utils.section('메타 INSERT') + insert + '\n';
     out += Utils.section('컬럼 HIST INSERT (I)') + hist + '\n\nCOMMIT;\n';
     Utils.setOutput('col-output', out);
