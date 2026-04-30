@@ -203,7 +203,10 @@ const TableTab = (() => {
 
     let ddl = `CREATE TABLE ${schema}.${tbl} (\n${ddlCols}`;
     if (pkCols.length) ddl += `,\n    CONSTRAINT PK_${tbl.replace(/^TB_/, '')} PRIMARY KEY (${pkCols.join(', ')})`;
-    if (ukCols.length) ddl += `,\n    CONSTRAINT UK_${tbl.replace(/^TB_/, '')}_01 UNIQUE (${ukCols.join(', ')})`;
+    ukCols.forEach((uk, i) => {
+      const seq = String(i + 1).padStart(2, '0');
+      ddl += `,\n    CONSTRAINT UK_${tbl.replace(/^TB_/, '')}_${seq} UNIQUE (${uk})`;
+    });
     ddl += '\n)';
     if (meta.tablespace) ddl += `\nTABLESPACE ${meta.tablespace.toUpperCase()}`;
     ddl += ';\n';
