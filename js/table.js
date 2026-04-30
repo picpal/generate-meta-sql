@@ -49,9 +49,13 @@ const TableTab = (() => {
     UI.renderFields(document.getElementById('tbl-sec-view'), [
       { type:'check', name:'viewGenYn', id:'tbl-view', label:'뷰 자동생성 대상 (DDL만, 메타 미적재)' },
       { label:'생성될 뷰명', name:'viewName', hint:'(VW_테이블명)' },
+      { type:'check', name:'pkSeqGenYn', id:'tbl-pk-seq', label:'PK 시퀀스 동시 생성 (기본 ON, NUMBER 단일 PK일 때)' },
       { label:'테이블스페이스', name:'tablespace', placeholder:'TS_SVC_DATA' },
       { label:'비고', name:'remark', full:true },
     ]);
+    // Default ON for PK 시퀀스 동시 생성
+    const pkSeqEl = document.getElementById('tbl-pk-seq');
+    if (pkSeqEl) pkSeqEl.checked = true;
   }
 
   function renderColumnEditor() {
@@ -198,7 +202,8 @@ const TableTab = (() => {
       return line;
     }).join(',\n');
 
-    const pkCols = cols.filter(c => c.pkYn).map(c => c.colName.toUpperCase());
+    const pkColObjs = cols.filter(c => c.pkYn);
+    const pkCols = pkColObjs.map(c => c.colName.toUpperCase());
     const ukCols = cols.filter(c => c.ukYn).map(c => c.colName.toUpperCase());
 
     let ddl = `CREATE TABLE ${schema}.${tbl} (\n${ddlCols}`;
@@ -284,8 +289,46 @@ SELECT
 FROM TB_META_COLUMN
 WHERE TABLE_ID = ${tableIdRef};`;
 
+    // PK 시퀀스 자동 생성 (단일 NUMBER PK)
+    let seqDdl = '';
+    let seqInsert = '';
+    let seqHist = '';
+    let seqSkipInfo = '';
+    if (meta.pkSeqGenYn) {
+      const singleNumberPk = pkColObjs.length === 1 && pkColObjs[0].dataType === 'NUMBER';
+      if (singleNumberPk) {
+        const pkColName = pkColObjs[0].colName.toUpperCase();
+        const tblBase = tbl.replace(/^TB_/, '');
+        const seqName = `SEQ_${tblBase}_${pkColName}`;
+        seqDdl = `CREATE SEQUENCE ${schema}.${seqName}\n  START WITH 1\n  INCREMENT BY 1\n  NOCYCLE\n  CACHE 20\n  NOORDER;\n`;
+        seqInsert = `INSERT INTO TB_META_SEQUENCE (
+    SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
+    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
+    CYCLE_YN, ORDER_YN, PURPOSE_CD,
+    USED_FOR_TABLE, USED_FOR_COLUMN, CREATE_DDL,
+    STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+) VALUES (
+    SEQ_META_SEQUENCE_ID.NEXTVAL,
+    ${Utils.q(schema)}, ${Utils.q(seqName)},
+    NULL, NULL, 1, 1, 20,
+    'N', 'N', 'PK',
+    ${Utils.q(tbl)}, ${Utils.q(pkColName)}, ${Utils.q(seqDdl.trim())},
+    'ACTIVE',
+    ${Utils.auditCols(emp).insert}
+);`;
+        seqHist = Utils.snapshotHist({
+          kind:'SEQUENCE', op:'I', reason, empId:emp,
+          whereClause: `SCHEMA_NAME = ${Utils.q(schema)} AND SEQUENCE_NAME = ${Utils.q(seqName)}`,
+        });
+      } else {
+        seqSkipInfo = `-- [INFO] PK 시퀀스 자동 생성: 단일 NUMBER PK가 아니므로 시퀀스 미생성.\n`;
+      }
+    }
+
     let out = '';
     if (warned) out += `-- [경고] 테이블명이 TB_ prefix로 자동 보정됨: ${meta.tableName.toUpperCase()} → ${tbl}\n`;
+    if (seqSkipInfo) out += seqSkipInfo;
     out += Utils.section('1. 테이블 DDL') + ddl;
     if (viewDdl) out += Utils.section('2. 뷰 DDL') + viewDdl;
     const n = viewDdl ? 3 : 2;
@@ -293,6 +336,11 @@ WHERE TABLE_ID = ${tableIdRef};`;
     out += Utils.section(`${n+1}. 컬럼 메타 INSERT`) + '\n' + colInserts;
     out += Utils.section(`${n+2}. 테이블 HIST INSERT (I)`) + tableHist;
     out += Utils.section(`${n+3}. 컬럼 HIST INSERT (I)`) + colHist;
+    if (seqDdl) {
+      out += Utils.section(`${n+4}. 시퀀스 DDL (PK 자동 채번)`) + seqDdl;
+      out += Utils.section(`${n+5}. 시퀀스 메타 INSERT`) + seqInsert + '\n';
+      out += Utils.section(`${n+6}. 시퀀스 HIST INSERT (I)`) + seqHist;
+    }
     out += '\n\nCOMMIT;\n';
 
     Utils.setOutput('tbl-output', out);
