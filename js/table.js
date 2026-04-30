@@ -11,6 +11,7 @@ const TableTab = (() => {
     renderRetention();
     renderView();
     renderColumnEditor();
+    renderDelete();
     UI.initSectionToggles(document.getElementById('tbl-tab'));
     addColumnRow();
     updateColCount();
@@ -102,6 +103,22 @@ const TableTab = (() => {
     });
   }
 
+  function renderDelete() {
+    document.getElementById('tbl-delete-body').innerHTML = `
+      <div class="info">표준 §6.8 — HARD 삭제는 자식(INDEX_COLUMN → INDEX → COLUMN) → 부모(TABLE) 순서로 HIST 적재 후 DELETE.</div>
+      <div class="grid">
+        <div class="field"><label>스키마명 <span class="req">*</span></label><input type="text" id="tbl-d-schema"></div>
+        <div class="field"><label>테이블명 <span class="req">*</span></label><input type="text" id="tbl-d-tableName" placeholder="TB_MEMBER"></div>
+        <div class="field full"><label>삭제 처리 방식 <span class="req">*</span></label>
+          <select id="tbl-d-mode">
+            <option value="SOFT">SOFT — STATUS_CD='DEPRECATED' (권장)</option>
+            <option value="HARD">HARD — TB_META_TABLE 및 자식 메타 모두 DELETE + DROP TABLE</option>
+          </select>
+        </div>
+      </div>
+    `;
+  }
+
   function addColumnRow(preset = {}) {
     colCounter += 1;
     const tbody = document.querySelector('#tbl-col-table tbody');
@@ -173,6 +190,13 @@ const TableTab = (() => {
   }
 
   function generate() {
+    const activeEl = document.querySelector('#tbl-tab .subtab-panel.active');
+    const active = activeEl ? activeEl.id : 'tbl-create';
+    if (active === 'tbl-delete') return genDelete();
+    return genCreate();
+  }
+
+  function genCreate() {
     const meta = readMeta();
     const cols = collectColumns();
     const emp = Utils.getEmpId();
@@ -319,12 +343,124 @@ WHERE TABLE_ID = ${tableIdRef};`;
     Utils.toast(`SQL 생성 완료 · ${cols.length}개 컬럼`);
   }
 
+  function genDelete() {
+    const reason = Utils.getReason('change-reason');
+    const emp = Utils.getEmpId();
+    const schemaRaw    = (document.getElementById('tbl-d-schema').value || '').trim().toUpperCase();
+    const tableNameRaw = (document.getElementById('tbl-d-tableName').value || '').trim();
+    const mode = document.getElementById('tbl-d-mode').value;
+
+    const errs = [];
+    if (!reason) errs.push('상단 "변경 사유"를 입력하세요.');
+    if (!schemaRaw) errs.push('스키마명이 필요합니다.');
+    if (!tableNameRaw) errs.push('테이블명이 필요합니다.');
+    if (mode !== 'SOFT' && mode !== 'HARD') errs.push('삭제 처리 방식이 올바르지 않습니다.');
+    if (errs.length) { UI.showValidation(errs); return; }
+    UI.clearValidation();
+
+    const schema = schemaRaw;
+    const tbl    = Utils.ensurePrefix(tableNameRaw, 'TB');
+    const whereTbl   = `SCHEMA_NAME = ${Utils.q(schema)} AND TABLE_NAME = ${Utils.q(tbl)}`;
+    const tableIdRef = `(SELECT TABLE_ID FROM TB_META_TABLE WHERE ${whereTbl})`;
+
+    let out = '';
+    if (mode === 'SOFT') {
+      out += Utils.section(`테이블 소프트 삭제(DEPRECATED): ${schema}.${tbl}`);
+      out += `-- 실제 테이블/메타는 유지하고 STATUS_CD만 'DEPRECATED'로 표기합니다.\nUPDATE TB_META_TABLE
+   SET STATUS_CD = 'DEPRECATED',
+       ${Utils.auditCols(emp).update}
+ WHERE ${whereTbl};\n`;
+      const hist = Utils.snapshotHist({ kind:'TABLE', op:'U', reason, empId:emp, whereClause: whereTbl });
+      out += Utils.section('테이블 HIST INSERT (U, SOFT)') + hist + '\n\nCOMMIT;\n';
+      Utils.setOutput('tbl-output', out);
+      Utils.toast('테이블 SOFT 삭제 SQL 생성 완료');
+      return;
+    }
+
+    // HARD — 표준 §6.8 자식→부모 순서
+    if (!confirm(`표준 §6.8에 따라 ${schema}.${tbl}의 자식 메타(INDEX_COLUMN/INDEX/COLUMN) 및 본 테이블 메타가 모두 삭제되고 DROP TABLE이 수행됩니다.\n\n계속 진행하시겠습니까?`)) {
+      Utils.toast('취소되었습니다.');
+      return;
+    }
+
+    out += Utils.section(`테이블 하드 삭제(표준 §6.8): ${schema}.${tbl}`);
+    out += `-- ═══════════════════════════════════════════════════════════════════
+-- [경고] 테이블 HARD 삭제 — implicit commit 주의
+-- ───────────────────────────────────────────────────────────────────
+-- DROP TABLE 은 DDL이며 implicit commit을 동반합니다. 본 SQL의 어느
+-- 단계가 실패해도 이미 commit된 단계는 롤백되지 않습니다(SAVEPOINT
+-- 효과 없음). 자식 → 부모 순서가 깨지면 ORA-02292 또는 메타 부정합
+-- 위험이 있으므로 다음 순서를 반드시 유지하세요.
+--
+-- 표준 §6.8 순서:
+--   1) INDEX_COLUMN_HIST 적재 → DELETE
+--   2) INDEX_HIST 적재 → DELETE
+--   3) COLUMN_HIST 적재 → DELETE
+--   4) TABLE_HIST 적재 → DELETE
+--   5) DROP TABLE (물리)
+--
+-- 실패 발생 시 다음을 반드시 확인:
+--   1) HIST 적재 여부 (TB_META_*_HIST 4종)
+--   2) 메타 DELETE 여부 (TB_META_INDEX_COLUMN/INDEX/COLUMN/TABLE)
+--   3) Oracle 측 실제 테이블/인덱스 잔존 여부
+-- 부정합이 발견되면 수동 cleanup으로 일관성 회복하세요.
+-- ═══════════════════════════════════════════════════════════════════
+`;
+
+    // 1) INDEX_COLUMN HIST + DELETE — Utils.HIST_COLS에 미정의이므로 §6.8 raw SQL 인라인.
+    const indexColCols = ['INDEX_ID','COLUMN_POS','COLUMN_NAME','SORT_ORDER','FUNC_EXPRESSION'];
+    const indexColHist = `INSERT INTO TB_META_INDEX_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    ${indexColCols.join(', ')}
+)
+SELECT
+    SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, ${Utils.q(emp)}, ${Utils.q(reason)},
+    ${indexColCols.map(c => 'mic.' + c).join(', ')}
+FROM TB_META_INDEX_COLUMN mic
+JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
+WHERE mi.TABLE_ID = ${tableIdRef};`;
+    out += Utils.section('1-1. 인덱스-컬럼 매핑 HIST INSERT (D)') + indexColHist + '\n';
+    out += Utils.section('1-2. 인덱스-컬럼 매핑 DELETE') + `DELETE FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef});\n`;
+
+    // 2) INDEX HIST + DELETE
+    const indexHist = Utils.snapshotHist({
+      kind:'INDEX', op:'D', reason, empId:emp,
+      whereClause: `TABLE_ID = ${tableIdRef}`,
+    });
+    out += Utils.section('2-1. 인덱스 메타 HIST INSERT (D)') + indexHist + '\n';
+    out += Utils.section('2-2. 인덱스 메타 DELETE') + `DELETE FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef};\n`;
+
+    // 3) COLUMN HIST + DELETE
+    const columnHist = Utils.snapshotHist({
+      kind:'COLUMN', op:'D', reason, empId:emp,
+      whereClause: `TABLE_ID = ${tableIdRef}`,
+    });
+    out += Utils.section('3-1. 컬럼 메타 HIST INSERT (D)') + columnHist + '\n';
+    out += Utils.section('3-2. 컬럼 메타 DELETE') + `DELETE FROM TB_META_COLUMN WHERE TABLE_ID = ${tableIdRef};\n`;
+
+    // 4) TABLE HIST + DELETE
+    const tableHist = Utils.snapshotHist({
+      kind:'TABLE', op:'D', reason, empId:emp,
+      whereClause: whereTbl,
+    });
+    out += Utils.section('4-1. 테이블 메타 HIST INSERT (D)') + tableHist + '\n';
+    out += Utils.section('4-2. 테이블 메타 DELETE') + `DELETE FROM TB_META_TABLE WHERE ${whereTbl};\n`;
+
+    // 5) DROP TABLE
+    out += Utils.section('5. 물리 DROP') + `DROP TABLE ${schema}.${tbl};\n\nCOMMIT;\n`;
+
+    Utils.setOutput('tbl-output', out);
+    Utils.toast('테이블 HARD 삭제 SQL 생성 완료');
+  }
+
   function clear() {
     if (!confirm('입력 내용을 모두 지울까요?')) return;
     renderBasic(); renderOwner(); renderRetention(); renderView();
     document.querySelector('#tbl-col-table tbody').innerHTML = '';
     colCounter = 0;
     addColumnRow();
+    renderDelete();
     Utils.setOutput('tbl-output', '');
     UI.clearValidation();
   }

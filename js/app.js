@@ -6,7 +6,7 @@ const App = (() => {
   let currentTab = 'tbl-tab';
 
   const TAB_META = {
-    'tbl-tab': { title:'테이블 신규 생성',        sub:'CREATE TABLE · META INSERT · HIST',        mod:TableTab },
+    'tbl-tab': { title:'테이블 생성·삭제',         sub:'CREATE/DROP TABLE · META DML · HIST',       mod:TableTab },
     'col-tab': { title:'컬럼 추가·변경·삭제',     sub:'ALTER · META DML · HIST',                   mod:ColumnTab },
     'idx-tab': { title:'인덱스 생성·삭제',        sub:'CREATE/DROP INDEX · META DML · HIST',       mod:IndexTab },
     'seq-tab': { title:'시퀀스 생성·변경·삭제',   sub:'CREATE/ALTER/DROP SEQUENCE · META DML · HIST', mod:SequenceTab },

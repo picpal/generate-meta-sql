@@ -25,9 +25,9 @@
     </div>
 
     <div class="nav-section">작업</div>
-    <button class="nav-btn active" data-target="tbl-tab" title="테이블 신규 생성 (Alt+1)">
+    <button class="nav-btn active" data-target="tbl-tab" title="테이블 생성·삭제 (Alt+1)">
       <span class="nav-idx">01</span>
-      <span>테이블 신규 생성</span>
+      <span>테이블 생성·삭제</span>
     </button>
     <button class="nav-btn" data-target="col-tab" title="컬럼 추가·변경·삭제 (Alt+2)">
       <span class="nav-idx">02</span>
@@ -56,8 +56,8 @@
 
     <!-- Top bar: title + reason + actions -->
     <div class="topbar">
-      <h2 id="current-title">테이블 신규 생성</h2>
-      <span class="subtitle" id="current-subtitle">CREATE TABLE · META INSERT · HIST</span>
+      <h2 id="current-title">테이블 생성·삭제</h2>
+      <span class="subtitle" id="current-subtitle">CREATE/DROP TABLE · META DML · HIST</span>
 
       <div class="reason-bar" id="reason-bar">
         <label for="change-reason">변경 사유 <span style="color:var(--danger)">*</span></label>
@@ -98,48 +98,59 @@
 
           <!-- ═════ TAB 1: TABLE ═════ -->
           <section class="tab-panel active" id="tbl-tab">
-            <form id="tbl-meta-form" onsubmit="return false">
+            <div class="subtabs">
+              <button class="subtab-btn active" data-target="tbl-create"><span class="op-badge">CREATE</span>신규 생성</button>
+              <button class="subtab-btn" data-target="tbl-delete" data-op="DROP"><span class="op-badge">DROP</span>삭제</button>
+            </div>
 
-              <div class="section" data-section>
-                <div class="section-head" data-toggle>
-                  <div class="section-title"><span class="step">1</span>기본 정보</div>
-                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="section-body" id="tbl-sec-basic"></div>
-              </div>
+            <div class="subtab-panel active" id="tbl-create">
+              <form id="tbl-meta-form" onsubmit="return false">
 
-              <div class="section" data-section>
-                <div class="section-head" data-toggle>
-                  <div class="section-title"><span class="step">2</span>소유·보안·격리</div>
-                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                <div class="section" data-section>
+                  <div class="section-head" data-toggle>
+                    <div class="section-title"><span class="step">1</span>기본 정보</div>
+                    <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="section-body" id="tbl-sec-basic"></div>
                 </div>
-                <div class="section-body" id="tbl-sec-owner"></div>
-              </div>
 
-              <div class="section" data-section>
-                <div class="section-head" data-toggle>
-                  <div class="section-title"><span class="step">3</span>보관·약관</div>
-                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                <div class="section" data-section>
+                  <div class="section-head" data-toggle>
+                    <div class="section-title"><span class="step">2</span>소유·보안·격리</div>
+                    <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="section-body" id="tbl-sec-owner"></div>
                 </div>
-                <div class="section-body" id="tbl-sec-retention"></div>
-              </div>
 
-              <div class="section" data-section>
-                <div class="section-head" data-toggle>
-                  <div class="section-title"><span class="step">4</span>뷰·테이블스페이스·비고</div>
-                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                <div class="section" data-section>
+                  <div class="section-head" data-toggle>
+                    <div class="section-title"><span class="step">3</span>보관·약관</div>
+                    <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="section-body" id="tbl-sec-retention"></div>
                 </div>
-                <div class="section-body" id="tbl-sec-view"></div>
-              </div>
 
-              <div class="section" data-section>
-                <div class="section-head" data-toggle>
-                  <div class="section-title"><span class="step">5</span>컬럼 정의 <span class="hint" id="tbl-col-count">· 0개</span></div>
-                  <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                <div class="section" data-section>
+                  <div class="section-head" data-toggle>
+                    <div class="section-title"><span class="step">4</span>뷰·테이블스페이스·비고</div>
+                    <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="section-body" id="tbl-sec-view"></div>
                 </div>
-                <div class="section-body" id="tbl-col-body"></div>
-              </div>
-            </form>
+
+                <div class="section" data-section>
+                  <div class="section-head" data-toggle>
+                    <div class="section-title"><span class="step">5</span>컬럼 정의 <span class="hint" id="tbl-col-count">· 0개</span></div>
+                    <svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </div>
+                  <div class="section-body" id="tbl-col-body"></div>
+                </div>
+              </form>
+            </div>
+
+            <div class="subtab-panel" id="tbl-delete">
+              <div class="section"><div class="section-head" data-toggle><div class="section-title">테이블 삭제</div><svg class="caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg></div><div class="section-body" id="tbl-delete-body"></div></div>
+            </div>
           </section>
 
           <!-- ═════ TAB 2: COLUMN ═════ -->
@@ -310,12 +321,12 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 <script src="js/ui.js?v=7"></script>
 <script src="js/sqlview.js?v=6"></script>
 <!-- Tab modules -->
-<script src="js/table.js?v=16"></script>
+<script src="js/table.js?v=17"></script>
 <script src="js/column.js?v=1"></script>
 <script src="js/indexMgr.js?v=1"></script>
 <script src="js/sequence.js?v=1"></script>
 <!-- App bootstrap (must load last) -->
-<script src="js/app.js?v=1"></script>
+<script src="js/app.js?v=2"></script>
 
 </body>
 </html>
