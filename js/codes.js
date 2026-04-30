@@ -121,4 +121,7 @@ const CODES = {
     'VARCHAR2', 'CHAR', 'NUMBER', 'DATE', 'TIMESTAMP',
     'CLOB', 'BLOB', 'RAW', 'FLOAT', 'BINARY_DOUBLE',
   ],
+
+  // 길이 시맨틱 (VARCHAR2/CHAR 전용; 미지정 시 NLS_LENGTH_SEMANTICS 따름)
+  LENGTH_SEMANTICS: ['BYTE', 'CHAR'],
 };
