@@ -59,11 +59,17 @@ const Utils = {
     return html;
   },
 
-  /** Oracle 데이터타입 → 컬럼 DDL 일부 */
-  typeDDL(type, length, precision, scale) {
+  /** Oracle 데이터타입 → 컬럼 DDL 일부
+   *  @param {string} [lengthSemantics] 'BYTE'|'CHAR' (VARCHAR2/CHAR 전용, 미지정 시 Oracle 세션 기본값(NLS_LENGTH_SEMANTICS) 따름) */
+  typeDDL(type, length, precision, scale, lengthSemantics) {
     const t = (type || '').toUpperCase();
-    if (t === 'VARCHAR2' || t === 'CHAR' || t === 'RAW') {
-      return `${t}(${length || 1})`;
+    if (t === 'VARCHAR2' || t === 'CHAR') {
+      const sem = (lengthSemantics || '').toUpperCase();
+      const semSuffix = (sem === 'CHAR' || sem === 'BYTE') ? ` ${sem}` : '';
+      return `${t}(${length || 1}${semSuffix})`;
+    }
+    if (t === 'RAW') {
+      return `RAW(${length || 1})`;
     }
     if (t === 'NUMBER') {
       if (precision && scale !== null && scale !== undefined && scale !== '') {
