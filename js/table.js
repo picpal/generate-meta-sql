@@ -180,9 +180,12 @@ const TableTab = (() => {
 
     const errors = [];
     if (!reason) errors.push('상단 "변경 사유"를 입력하세요.');
-    if (!meta.schema) errors.push('스키마명이 필요합니다.');
-    if (!meta.tableName) errors.push('테이블명이 필요합니다.');
+    Utils.checkName('스키마명', meta.schema, errors);
+    Utils.checkName('테이블명', meta.tableName ? Utils.ensurePrefix(meta.tableName, 'TB') : '', errors);
     if (cols.length === 0) errors.push('컬럼을 1개 이상 추가하세요.');
+    cols.forEach((c, i) => Utils.checkName(`${i + 1}번 컬럼명`, c.colName, errors));
+    Utils.checkName('테이블스페이스', meta.tablespace, errors, false);
+    if (meta.viewGenYn) Utils.checkName('뷰명', meta.viewName, errors, false);
     if (errors.length) { UI.showValidation(errors); return; }
     UI.clearValidation();
 

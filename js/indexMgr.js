@@ -65,14 +65,14 @@ const IndexTab = (() => {
     const d = readField('idx', ['schema','tableName','indexName','indexTypeCd','purposeCd','indexColumns','tablespaceName','initrans','pctfree','performanceNote']);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!d.schema) errs.push('스키마명 필수.');
-    if (!d.tableName) errs.push('테이블명 필수.');
+    Utils.checkName('스키마명', d.schema, errs);
+    Utils.checkName('테이블명', d.tableName ? Utils.ensurePrefix(d.tableName, 'TB') : '', errs);
+    if (d.indexName) Utils.checkName('인덱스명', d.indexName, errs);
+    Utils.checkName('테이블스페이스', d.tablespaceName, errs, false);
     if (!d.indexColumns) errs.push('컬럼 목록 필수.');
-    if (errs.length) { UI.showValidation(errs); return; }
-    UI.clearValidation();
 
-    const schema = d.schema.toUpperCase();
-    const tbl    = Utils.ensurePrefix(d.tableName, 'TB');
+    const schema = d.schema ? d.schema.toUpperCase() : '';
+    const tbl    = d.tableName ? Utils.ensurePrefix(d.tableName, 'TB') : '';
     let idxName  = d.indexName ? d.indexName.toUpperCase() : null;
     if (!idxName) {
       const prefix = d.indexTypeCd === 'UNIQUE' ? 'UIX' : 'IX';
@@ -80,7 +80,10 @@ const IndexTab = (() => {
     }
     idxName = Utils.ensurePrefix(idxName, d.indexTypeCd === 'UNIQUE' ? 'UIX' : 'IX');
 
-    const cols = d.indexColumns.split(',').map(s => parseIdxColumn(s)).filter(Boolean);
+    const cols = d.indexColumns ? d.indexColumns.split(',').map(s => parseIdxColumn(s)).filter(Boolean) : [];
+    cols.forEach((c, i) => Utils.checkName(`인덱스 컬럼 #${i + 1}`, c.name, errs));
+    if (errs.length) { UI.showValidation(errs); return; }
+    UI.clearValidation();
     const colsExpr = cols.map(c => c.sort === 'DESC' ? `${c.name} DESC` : c.name).join(', ');
 
     let ddl;
@@ -138,8 +141,9 @@ const IndexTab = (() => {
     const d = readField('idx-drop', ['schema','tableName','indexName']);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!d.schema) errs.push('스키마명 필수.');
-    if (!d.indexName) errs.push('인덱스명 필수.');
+    Utils.checkName('스키마명', d.schema, errs);
+    Utils.checkName('인덱스명', d.indexName, errs);
+    if (d.tableName) Utils.checkName('테이블명', Utils.ensurePrefix(d.tableName, 'TB'), errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 

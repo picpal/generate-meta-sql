@@ -121,9 +121,9 @@ const ColumnTab = (() => {
     const c = readField('col-add', COL_FIELDS);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!t.schema) errs.push('스키마명 필수.');
-    if (!t.tableName) errs.push('테이블명 필수.');
-    if (!c.colName) errs.push('컬럼명 필수.');
+    Utils.checkName('스키마명', t.schema, errs);
+    Utils.checkName('테이블명', t.tableName ? Utils.ensurePrefix(t.tableName, 'TB') : '', errs);
+    Utils.checkName('컬럼명', c.colName, errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -188,7 +188,9 @@ const ColumnTab = (() => {
     const c = readField('col-mod', COL_FIELDS);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!t.schema || !t.tableName || !c.colName) errs.push('스키마/테이블/컬럼명 모두 필수.');
+    Utils.checkName('스키마명', t.schema, errs);
+    Utils.checkName('테이블명', t.tableName ? Utils.ensurePrefix(t.tableName, 'TB') : '', errs);
+    Utils.checkName('컬럼명', c.colName, errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -253,7 +255,9 @@ const ColumnTab = (() => {
     const mode = document.getElementById('col-drop-mode').value;
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!schema || !tableName || !colName) errs.push('스키마/테이블/컬럼명 모두 필수.');
+    Utils.checkName('스키마명', schema, errs);
+    Utils.checkName('테이블명', tableName ? Utils.ensurePrefix(tableName, 'TB') : '', errs);
+    Utils.checkName('컬럼명', colName, errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 

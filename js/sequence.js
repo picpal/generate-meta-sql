@@ -80,8 +80,10 @@ const SequenceTab = (() => {
     const d = readField('seq-c', ['schema','seqName','purposeCd','usedForTable','usedForColumn','incrementBy','startWith','minValue','maxValue','cacheSize','cycleYn','orderYn']);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!d.schema) errs.push('스키마명 필수.');
-    if (!d.seqName) errs.push('시퀀스명 필수.');
+    Utils.checkName('스키마명', d.schema, errs);
+    Utils.checkName('시퀀스명', d.seqName ? buildSeqName(d.seqName) : '', errs);
+    Utils.checkName('주 사용 테이블', d.usedForTable, errs, false);
+    Utils.checkName('주 사용 컬럼', d.usedForColumn, errs, false);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -124,7 +126,10 @@ const SequenceTab = (() => {
     const d = readField('seq-a', ['schema','seqName','purposeCd','usedForTable','usedForColumn','incrementBy','minValue','maxValue','cacheSize','cycleYn','orderYn']);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!d.schema || !d.seqName) errs.push('스키마/시퀀스명 필수.');
+    Utils.checkName('스키마명', d.schema, errs);
+    Utils.checkName('시퀀스명', d.seqName ? buildSeqName(d.seqName) : '', errs);
+    Utils.checkName('주 사용 테이블', d.usedForTable, errs, false);
+    Utils.checkName('주 사용 컬럼', d.usedForColumn, errs, false);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -170,7 +175,8 @@ const SequenceTab = (() => {
     const seqName = (document.getElementById('seq-d-seqName').value || '').trim();
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
-    if (!schema || !seqName) errs.push('스키마/시퀀스명 필수.');
+    Utils.checkName('스키마명', schema, errs);
+    Utils.checkName('시퀀스명', seqName ? buildSeqName(seqName) : '', errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
