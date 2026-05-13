@@ -44,14 +44,6 @@ const CODES = {
     { value: 'DEPRECATED', name: '폐기예정' },
   ],
 
-  // 테이블 유형
-  TABLE_TYPE: [
-    { value: 'BASE',  name: '기본 테이블' },
-    { value: 'VIEW',  name: '뷰' },
-    { value: 'MVIEW', name: 'Materialized View' },
-    { value: 'EXT',   name: '외부 테이블' },
-  ],
-
   // 인덱스 유형
   INDEX_TYPE: [
     { value: 'NORMAL',   name: 'NORMAL' },

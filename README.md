@@ -40,8 +40,29 @@ generate-meta-sql/
 │   ├── indexMgr.js                      탭 3: 인덱스
 │   ├── sequence.js                      탭 4: 시퀀스
 │   └── app.js                           라우터·단축키·트윅 (반드시 마지막 로드)
-└── DB_메타정보_관리체계_표준설계.md      본 앱이 구현하는 메타 표준 설계서
+├── sql/                                  ★ 모든 실행 SQL (단일 진실 공급원)
+│   ├── 01_meta_ddl.sql                   [순서 1, 필수]   DDL 일괄
+│   ├── 02_common_code.sql                [순서 2, 필수]   공통코드 적재
+│   ├── 02a_cd_tos_template.sql           [순서 2.5, 선택] 사내 약관 코드
+│   ├── 03_initial_load.sql               [순서 3, 필수]   카탈로그 → 메타 적재
+│   ├── 04_drift_check.sql                [수시] Drift 감지
+│   ├── 05_integrity_check.sql            [수시] 정합성 점검
+│   ├── 06_func_idx_backfill.sql          [선택] 함수기반 인덱스 사후 보강
+│   ├── 07_view_gen_nonpci.sql            [선택] 비-PCI VIEW DDL 자동 생성
+│   └── 99_rollback.sql                   [긴급] 전체 롤백
+├── DB_메타정보_관리체계_표준설계.md      메타 표준 설계서 (명세 · 표 · 설계의도)
+├── SQL_검증리포트.md                     사내 반입 전 SQL 검증 리포트
+└── 운영가이드.md                         사내 운영 가이드 (실행 순서 · 트러블슈팅)
 ```
+
+## 사내 반입 후 SQL 실행 순서 (필수)
+
+1. [`sql/01_meta_ddl.sql`](sql/01_meta_ddl.sql) — DDL 생성
+2. [`sql/02_common_code.sql`](sql/02_common_code.sql) — 공통코드 적재
+3. (선택) [`sql/02a_cd_tos_template.sql`](sql/02a_cd_tos_template.sql) — 사내 약관 코드
+4. [`sql/03_initial_load.sql`](sql/03_initial_load.sql) — 카탈로그 → 메타 적재 (실행 전 SVC 스키마 치환 필수)
+
+상세 절차·검증·트러블슈팅: [운영가이드.md](운영가이드.md) 참조.
 
 ## 기술 스택
 

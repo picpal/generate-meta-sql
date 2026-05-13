@@ -35,7 +35,7 @@ const TableTab = (() => {
       { label:'스키마명', name:'schema', req:true, placeholder:'SVC_CUST' },
       { label:'테이블명', name:'tableName', req:true, hint:'(TB_ 자동 보정)', placeholder:'MEMBER' },
       { label:'논리명(한글)', name:'logicalName', placeholder:'회원 정보' },
-      { label:'테이블 유형', name:'tableType', req:true, type:'select', code:'TABLE_TYPE', includeEmpty:false },
+      { type:'check', name:'viewYn', id:'tbl-view-yn', label:'뷰 (체크 시 VIEW, 미체크 시 일반 테이블)' },
       { label:'설명', name:'description', type:'textarea', full:true, placeholder:'테이블 업무 설명' },
     ]);
   }
@@ -46,8 +46,7 @@ const TableTab = (() => {
       { type:'check', name:'keyTableYn', id:'tbl-key', label:'키 관련 테이블' },
       { type:'check', name:'isolationYn', id:'tbl-iso', label:'격리 필요' },
       { label:'격리 수준', name:'isolationLevelCd', type:'select', code:'ISOLATION_LEVEL' },
-      { type:'check', name:'piiYn', id:'tbl-pii', label:'개인정보 포함' },
-      { type:'check', name:'pciYn', id:'tbl-pci', label:'개인신용정보 포함', chip:'pci' },
+      { type:'check', name:'pciYn', id:'tbl-pci', label:'개인신용정보 포함 (개인정보 포괄)', chip:'pci' },
     ]);
   }
 
@@ -89,8 +88,7 @@ const TableTab = (() => {
           <th style="width:40px" title="PK">PK</th>
           <th style="width:40px" title="UK">UK</th>
           <th style="width:40px" title="FK">FK</th>
-          <th style="width:46px" title="개인정보">PII</th>
-          <th style="width:46px" title="개인신용정보">PCI</th>
+          <th style="width:46px" title="개인신용정보(개인정보 포괄)">PCI</th>
           <th style="min-width:110px">PCI 분류</th>
           <th style="width:46px" title="암호화">ENC</th>
           <th style="width:46px" title="마스킹">MSK</th>
@@ -153,7 +151,6 @@ const TableTab = (() => {
       <td class="flag-cell"><input type="checkbox" name="pkYn" ${preset.pkYn?'checked':''}></td>
       <td class="flag-cell"><input type="checkbox" name="ukYn"></td>
       <td class="flag-cell"><input type="checkbox" name="fkYn"></td>
-      <td class="flag-cell"><input type="checkbox" name="piiYn"></td>
       <td class="flag-cell"><input type="checkbox" name="pciYn"></td>
       <td><select name="pciCategoryCd">${Utils.buildOptions('PCI_CATEGORY', true)}</select></td>
       <td class="flag-cell"><input type="checkbox" name="encryptionYn"></td>
@@ -295,17 +292,17 @@ const TableTab = (() => {
     // TB_META_TABLE INSERT (spec 순서)
     const tableInsert = `INSERT INTO TB_META_TABLE (
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
-    TABLE_TYPE_CD, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
     KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
-    PII_YN, PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
     STATUS_CD, REMARK,
     CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
 ) VALUES (
     SEQ_META_TABLE_ID.NEXTVAL,
     ${Utils.q(schema)}, ${Utils.q(tbl)}, ${Utils.q(meta.logicalName)}, ${Utils.q(meta.description)},
-    ${Utils.q(meta.tableType)}, ${Utils.q(meta.serviceCd)}, ${Utils.q(emp)}, NULL,
+    ${Utils.yn(meta.viewYn)}, ${Utils.q(meta.serviceCd)}, ${Utils.q(emp)}, NULL,
     ${Utils.yn(meta.keyTableYn)}, ${Utils.yn(meta.isolationYn)}, ${Utils.q(meta.isolationLevelCd)},
-    ${Utils.yn(meta.piiYn)}, ${Utils.yn(meta.pciYn)}, ${Utils.q(meta.retentionPeriodCd)}, ${Utils.q(meta.retentionBasis)}, ${Utils.q(meta.tosCd)},
+    ${Utils.yn(meta.pciYn)}, ${Utils.q(meta.retentionPeriodCd)}, ${Utils.q(meta.retentionBasis)}, ${Utils.q(meta.tosCd)},
     'ACTIVE', ${Utils.q(meta.remark)},
     ${Utils.auditCols(emp).insert}
 );`;
@@ -319,7 +316,7 @@ const TableTab = (() => {
     DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
     NULLABLE_YN, DEFAULT_VALUE,
     PK_YN, UK_YN, FK_YN,
-    PII_YN, PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
     ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
     RETENTION_PERIOD_CD, TOS_CD,
     STATUS_CD, REMARK,
@@ -332,7 +329,7 @@ const TableTab = (() => {
     ${Utils.q(c.dataType)}, ${Utils.num(c.dataLength)}, ${Utils.num(c.dataPrecision)}, ${Utils.num(c.dataScale)},
     ${Utils.yn(c.pkYn ? false : c.nullableYn)}, ${Utils.q(c.defaultValue)},
     ${Utils.yn(c.pkYn)}, ${Utils.yn(c.ukYn)}, ${Utils.yn(c.fkYn)},
-    ${Utils.yn(c.piiYn)}, ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, 'LOW',
+    ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, 'LOW',
     ${Utils.yn(c.encryptionYn)}, NULL, ${Utils.yn(c.maskingYn)}, ${Utils.q(c.maskingRuleCd)},
     NULL, NULL,
     'ACTIVE', NULL,
