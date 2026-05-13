@@ -21,8 +21,8 @@ const IndexTab = (() => {
       { label:'생성 목적', req:true, type:'select', name:'purposeCd', id:'idx-purposeCd', code:'INDEX_PURPOSE', includeEmpty:false },
       { label:'컬럼 목록', req:true, full:true, name:'indexColumns', id:'idx-indexColumns', placeholder:'MEMBER_ID, CREATED_AT DESC' , hint:'(쉼표 구분. DESC 지정 가능)'},
       { label:'테이블스페이스', name:'tablespaceName', id:'idx-tablespaceName', placeholder:'TS_SVC_IDX' },
-      { label:'INITRANS', type:'number', name:'initrans', id:'idx-initrans' },
-      { label:'PCTFREE', type:'number', name:'pctfree', id:'idx-pctfree' },
+      { label:'INI_TRANS', type:'number', name:'iniTrans', id:'idx-iniTrans' },
+      { label:'PCT_FREE', type:'number', name:'pctFree', id:'idx-pctFree' },
       { label:'튜닝 이력/생성 사유', type:'textarea', full:true, name:'performanceNote', id:'idx-performanceNote' },
     ]);
   }
@@ -62,7 +62,7 @@ const IndexTab = (() => {
   function genCreate() {
     const reason = Utils.getReason('change-reason');
     const emp = Utils.getEmpId();
-    const d = readField('idx', ['schema','tableName','indexName','indexTypeCd','purposeCd','indexColumns','tablespaceName','initrans','pctfree','performanceNote']);
+    const d = readField('idx', ['schema','tableName','indexName','indexTypeCd','purposeCd','indexColumns','tablespaceName','iniTrans','pctFree','performanceNote']);
     const errs = [];
     if (!reason) errs.push('상단 변경 사유 필수.');
     Utils.checkName('스키마명', d.schema, errs);
@@ -91,8 +91,8 @@ const IndexTab = (() => {
     else if (d.indexTypeCd === 'BITMAP')  ddl = `CREATE BITMAP INDEX ${schema}.${idxName} ON ${schema}.${tbl} (${colsExpr})`;
     else                                  ddl = `CREATE INDEX ${schema}.${idxName} ON ${schema}.${tbl} (${colsExpr})`;
     if (d.tablespaceName) ddl += `\nTABLESPACE ${d.tablespaceName.toUpperCase()}`;
-    if (d.initrans) ddl += `\nINITRANS ${d.initrans}`;
-    if (d.pctfree)  ddl += `\nPCTFREE ${d.pctfree}`;
+    if (d.iniTrans) ddl += `\nINITRANS ${d.iniTrans}`;
+    if (d.pctFree)  ddl += `\nPCTFREE ${d.pctFree}`;
     ddl += ';\n';
 
     const tableIdRef = `(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME=${Utils.q(schema)} AND TABLE_NAME=${Utils.q(tbl)})`;
@@ -101,7 +101,7 @@ const IndexTab = (() => {
     // TB_META_INDEX INSERT (spec 순서)
     const idxInsert = `INSERT INTO TB_META_INDEX (
     INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
-    TABLESPACE_NAME, INITRANS, PCTFREE,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
     PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL,
     STATUS_CD,
     CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
@@ -109,7 +109,7 @@ const IndexTab = (() => {
     SEQ_META_INDEX_ID.NEXTVAL,
     ${tableIdRef},
     ${Utils.q(idxName)}, ${Utils.q(d.indexTypeCd)},
-    ${Utils.q(d.tablespaceName ? d.tablespaceName.toUpperCase() : '')}, ${Utils.num(d.initrans)}, ${Utils.num(d.pctfree)},
+    ${Utils.q(d.tablespaceName ? d.tablespaceName.toUpperCase() : '')}, ${Utils.num(d.iniTrans)}, ${Utils.num(d.pctFree)},
     ${Utils.q(d.purposeCd)}, ${Utils.q(d.performanceNote)}, ${Utils.q(ddl.trim())},
     'ACTIVE',
     ${Utils.auditCols(emp).insert}

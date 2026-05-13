@@ -174,8 +174,8 @@
 | INDEX_NAME                   | VARCHAR2(128)  | N    | 인덱스명                                                   |
 | INDEX_TYPE_CD                | VARCHAR2(20)   | N    | `CD_INDEX_TYPE`: NORMAL/UNIQUE/BITMAP/FUNCTION/REVERSE |
 | TABLESPACE_NAME              | VARCHAR2(30)   | Y    | 테이블스페이스                                                |
-| INITRANS                     | NUMBER(4)      | Y    | INITRANS                                               |
-| PCTFREE                      | NUMBER(3)      | Y    | PCTFREE                                                |
+| INI_TRANS                    | NUMBER(4)      | Y    | INITRANS (Oracle DDL storage clause 키워드)              |
+| PCT_FREE                     | NUMBER(3)      | Y    | PCTFREE (Oracle DDL storage clause 키워드)               |
 | PURPOSE_CD                   | VARCHAR2(20)   | N    | `CD_INDEX_PURPOSE`: PK/FK/SEARCH/JOIN/TUNING/SORT      |
 | PERFORMANCE_NOTE             | VARCHAR2(4000) | Y    | 튜닝 이력(언제, 왜 생성·변경)                                     |
 | CREATE_DDL                   | CLOB           | Y    | 인덱스 생성 DDL 원문                                          |
@@ -390,7 +390,7 @@
 > **분류 로직 보정**:
 > - `INDEX_TYPE_CD`: BITMAP/FUNCTION-BASED/REVERSE를 우선 매칭한 뒤 UNIQUE → 그 외 NORMAL. (이전: UNIQUE 우선이라 함수+UNIQUE/리버스+UNIQUE 인덱스의 유형 정보 손실)
 > - `PURPOSE_CD`: `ALL_CONSTRAINTS`의 PK 제약과 `INDEX_NAME` 매칭으로 PK 판별. UK 자동 인덱스를 PK로 잘못 분류하던 문제 제거.
-> - 함수기반 인덱스의 표현식은 `ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION`(LONG)에 들어 있어 SQL-only 표준 스크립트에서는 `FUNC_EXPRESSION`을 `NULL`로 둔다. 필요 시 DB 밖의 변경 도구가 별도 보강한다.
+> - 함수기반 인덱스의 표현식은 `ALL_IND_EXPRESSIONS.COLUMN_EXPRESSION`(LONG)에 들어 있어 SQL-only 표준 스크립트에서는 `FUNC_EXPRESSION`을 `NULL`로 둔다. 사후 보강은 [`sql/06_func_idx_backfill.sql`](sql/06_func_idx_backfill.sql)의 SELECT로 LONG 값을 화면 표시한 뒤 운영자가 수기 UPDATE로 채우거나, DB 밖의 변경 도구가 별도 처리.
 > - `NOT EXISTS` 가드로 UK 충돌 없이 재실행.
 
 > **실행 SQL**: [`sql/03_initial_load.sql`](sql/03_initial_load.sql) §7.3.1 (헤더 `TB_META_INDEX`), §7.3.2 (`TB_META_INDEX_COLUMN`) 부분
