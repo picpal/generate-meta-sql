@@ -6,7 +6,9 @@
 -- 정책:
 --   - 대상: TB_META_TABLE.VIEW_YN='Y' AND STATUS_CD='ACTIVE'
 --   - 노출 컬럼: TB_META_COLUMN.PCI_YN='N' AND STATUS_CD='ACTIVE'
---   - 결과 행 1개 = CREATE OR REPLACE VIEW DDL 1개 (개행 없는 단일 라인)
+--   - 결과 행 1개 = VIEW 1개분 DDL 묶음 (CREATE VIEW + GRANT + CREATE SYNONYM, CHR(10) 구분)
+--   - CREATE VIEW(OR REPLACE 없음) → 동일명 뷰가 이미 있으면 ORA-00955 발생, 사전 DROP 필요
+--   - 권한/시노님 규칙: GRANT SELECT ... TO <SCHEMA>_V; / CREATE SYNONYM <SCHEMA>_VIEW.<뷰> FOR <SCHEMA>.<뷰>;
 --   - SPOOL/CSV 추출 후 별도 검토 → 실행 (자동 실행 안 함)
 -- 사용 예:
 --     SET LONG 32767
@@ -26,9 +28,13 @@
 --   주의 2: Oracle 식별자 길이 한도(12.2+ 128byte). 원본명이 126자 이상이면
 --          'VW_' prefix 추가 시 한도 초과 가능 → (3) 점검 쿼리로 사전 확인.
 -- ---------------------------------------------------------------------
-SELECT 'CREATE OR REPLACE VIEW ' || mt.SCHEMA_NAME || '.VW_' || mt.TABLE_NAME || ' AS SELECT '
+SELECT 'CREATE VIEW ' || mt.SCHEMA_NAME || '.VW_' || mt.TABLE_NAME || ' AS SELECT '
        || LISTAGG(mc.COLUMN_NAME, ', ') WITHIN GROUP (ORDER BY mc.COLUMN_ORDER)
-       || ' FROM ' || mt.SCHEMA_NAME || '.' || mt.TABLE_NAME || ';' AS DDL
+       || ' FROM ' || mt.SCHEMA_NAME || '.' || mt.TABLE_NAME || ';' || CHR(10)
+       || 'GRANT SELECT ON ' || mt.SCHEMA_NAME || '.VW_' || mt.TABLE_NAME
+       || ' TO ' || mt.SCHEMA_NAME || '_V;' || CHR(10)
+       || 'CREATE SYNONYM ' || mt.SCHEMA_NAME || '_VIEW.VW_' || mt.TABLE_NAME
+       || ' FOR ' || mt.SCHEMA_NAME || '.VW_' || mt.TABLE_NAME || ';' AS DDL
 FROM TB_META_TABLE  mt
 JOIN TB_META_COLUMN mc ON mc.TABLE_ID = mt.TABLE_ID
 WHERE mt.VIEW_YN   = 'Y'
