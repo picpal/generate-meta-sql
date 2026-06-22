@@ -30,6 +30,7 @@
 | `sql/05_integrity_check.sql` | 운영 점검 | 02·03 직후 + 수시 |
 | `sql/06_func_idx_backfill.sql` | 운영 보강 | 함수기반 인덱스 식별 시 |
 | `sql/07_view_gen_nonpci.sql` | 메타 활용 | 비-PCI VIEW DDL 자동 생성 (SPOOL → 검토 → 수동 실행) |
+| `sql/07a_view_review_sample.sql` | 메타 활용 | 비-PCI VIEW 생성 전 보안검토 실데이터 시트 (SPOOL → 보안팀 검토) |
 | `sql/99_rollback.sql` | 긴급 롤백 | ⚠️ 책임자 승인 후 |
 
 ---

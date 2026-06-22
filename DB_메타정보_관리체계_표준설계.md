@@ -476,8 +476,9 @@
 | 단계 | 행위자 | 작업 | 산출 |
 |:---:|---|---|---|
 | **1** | 데이터/보안 담당자 | `TB_META_TABLE.VIEW_YN`, `TB_META_COLUMN.PCI_YN` 검토·지정 (웹앱 탭1/탭2 또는 직접 UPDATE + HIST 동시 적재) | 메타 SSOT 확정 |
-| **2** | 운영자 | `sql/07_view_gen_nonpci.sql` SPOOL 실행 → 결과 DDL 검토 | VIEW DDL 스크립트 |
-| **3** | 운영자 | 검토된 DDL을 단일 세션에서 일괄 실행 | `VW_*` VIEW 생성/갱신 |
+| **2** | 보안팀 | `sql/07a_view_review_sample.sql` SPOOL 실행 → 비-PCI 컬럼 실데이터 1건으로 PCI 오분류 검증 | 보안검토 시트 |
+| **3** | 운영자 | `sql/07_view_gen_nonpci.sql` SPOOL 실행 → 결과 DDL 검토 | VIEW DDL 스크립트 |
+| **4** | 운영자 | 검토된 DDL을 단일 세션에서 일괄 실행 | `VW_*` VIEW 생성/갱신 |
 
 > **선행 조건**: 1단계가 완료되지 않은 상태에서 2단계를 실행하면 누락·오분류 컬럼이 그대로 VIEW에 반영된다. PCI 분류는 본 워크플로의 신뢰 경계이므로 반드시 1단계 종료 후 2단계로 진입.
 
@@ -489,7 +490,7 @@
 | 노출 컬럼 | `TB_META_COLUMN.PCI_YN='N' AND STATUS_CD='ACTIVE'` |
 | 컬럼 순서 | `TB_META_COLUMN.COLUMN_ORDER` 보존 |
 | 생성 VIEW 이름 | `VW_<원본명>` (prefix) — 원본과의 네임스페이스 충돌 회피 |
-| 출력 형식 | `CREATE OR REPLACE VIEW <SCHEMA>.VW_<원본> AS SELECT … FROM <SCHEMA>.<원본>;` 1라인/1행 |
+| 출력 형식 | `CREATE VIEW <SCHEMA>.VW_<원본> AS SELECT … FROM <SCHEMA>.<원본>;` 1라인/1행 (OR REPLACE 미사용) |
 | 실행 정책 | DDL 문자열만 생성, **자동 실행 안 함** (SPOOL → 검토 → 수동 실행) |
 
 ### 9.4 예외 / 사전 점검
@@ -497,8 +498,11 @@
 - **모든 컬럼이 PCI인 경우** → 결과 행에서 자동 제외 (별도 점검 쿼리로 식별)
 - **이름 길이 한도** → `LENGTHB(원본명) + 3 > 128` 인 후보는 사전 점검 쿼리로 검출 (Oracle 12.2+ 식별자 128byte)
 - **LISTAGG 4000byte 한도** → 컬럼 수가 매우 많은 VIEW는 잘림 가능 → 점검 쿼리 NON_PCI_COL 수와 대조
+- **재실행 / 갱신** → `CREATE VIEW`(OR REPLACE 미사용)이므로 동일명 VIEW가 이미 있으면 `ORA-00955`. **최초 생성은 정상**이며, 재배포 시 `DROP VIEW <SCHEMA>.VW_<원본>;` 선행 필요
 
 > **실행 SQL**: [`sql/07_view_gen_nonpci.sql`](sql/07_view_gen_nonpci.sql) — (1) 본 쿼리 / (2) 비-PCI 컬럼 0개 점검 / (3) 식별자 한도 초과 후보 점검
+>
+> **검토 SQL**: [`sql/07a_view_review_sample.sql`](sql/07a_view_review_sample.sql) — 위 2단계(보안검토)용. (1) 테이블별 실데이터 시트 SELECT 생성 → SPOOL 후 실행, (2) 컬럼 분류 현황 점검. 비-PCI 컬럼의 실데이터 1건을 보여 PCI 오분류를 육안 검증.
 
 ---
 

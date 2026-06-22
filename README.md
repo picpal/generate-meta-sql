@@ -49,6 +49,7 @@ generate-meta-sql/
 │   ├── 05_integrity_check.sql            [수시] 정합성 점검
 │   ├── 06_func_idx_backfill.sql          [선택] 함수기반 인덱스 사후 보강
 │   ├── 07_view_gen_nonpci.sql            [선택] 비-PCI VIEW DDL 자동 생성
+│   ├── 07a_view_review_sample.sql        [선택] 비-PCI VIEW 생성 전 보안검토 실데이터 시트
 │   └── 99_rollback.sql                   [긴급] 전체 롤백
 ├── DB_메타정보_관리체계_표준설계.md      메타 표준 설계서 (명세 · 표 · 설계의도)
 ├── SQL_검증리포트.md                     사내 반입 전 SQL 검증 리포트
