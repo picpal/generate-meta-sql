@@ -21,7 +21,7 @@
 --   - 실데이터를 읽으므로 (2) 실행자는 대상 SCHEMA 원본테이블 SELECT 권한 필요.
 --   - 산출물에 (N으로 잘못 분류된) 개인신용정보가 노출될 수 있음 → 보안팀 내부 한정 취급.
 --   - LOB/RAW/XML 계열은 UNPIVOT 불가라 실데이터 추출에서 제외(메타 행은 그대로, 실데이터 NULL).
---   - LISTAGG는 VARCHAR2(4000) 한도. 컬럼 많으면 col 목록이 잘릴 수 있음 → (2) 점검과 대조.
+--   - 생성 SQL은 CLOB(XMLAGG/TO_CLOB)로 누적 → ORA-01489(4000byte 연결 한도) 회피. 출력에 SET LONG 32767 필수.
 -- 사용 예:
 --     SET LONG 32767
 --     SET LINESIZE 32767
@@ -42,7 +42,7 @@
 --   특정 테이블만 검토하려면 인라인뷰 WHERE에 주석 처리된 라인을 켤 것.
 -- ---------------------------------------------------------------------
 SELECT
-       'SELECT' || CHR(10)
+       TO_CLOB('SELECT' || CHR(10))   -- CLOB로 시작 → 이후 연결이 CLOB라 ORA-01489(4000byte) 회피
     || '  ''' || x.SCHEMA_NAME || ''' AS 스키마,' || CHR(10)
     || '  ''' || x.TABLE_NAME  || ''' AS 테이블명,' || CHR(10)
     || '  m.COLUMN_NAME AS 컬럼,' || CHR(10)
@@ -66,10 +66,11 @@ SELECT
     || 'ORDER BY m.COLUMN_ORDER;' || CHR(10) AS GEN_SQL
 FROM (
   SELECT mt.SCHEMA_NAME, mt.TABLE_NAME,
-         LISTAGG('TO_CHAR(' || mc.COLUMN_NAME || ') ' || mc.COLUMN_NAME, ', ')
-           WITHIN GROUP (ORDER BY mc.COLUMN_ORDER) AS col_list,
-         LISTAGG(mc.COLUMN_NAME || ' AS ''' || mc.COLUMN_NAME || '''', ', ')
-           WITHIN GROUP (ORDER BY mc.COLUMN_ORDER) AS unpiv_list
+         -- LISTAGG(VARCHAR2 4000 한도) 대신 XMLAGG로 CLOB 누적 → 컬럼 수 무관
+         RTRIM(XMLAGG(XMLELEMENT(E, 'TO_CHAR(' || mc.COLUMN_NAME || ') ' || mc.COLUMN_NAME || ', ')
+                      ORDER BY mc.COLUMN_ORDER).EXTRACT('//text()').getClobVal(), ', ') AS col_list,
+         RTRIM(XMLAGG(XMLELEMENT(E, mc.COLUMN_NAME || ' AS ''' || mc.COLUMN_NAME || ''', ')
+                      ORDER BY mc.COLUMN_ORDER).EXTRACT('//text()').getClobVal(), ', ') AS unpiv_list
   FROM TB_META_TABLE  mt
   JOIN TB_META_COLUMN mc ON mc.TABLE_ID = mt.TABLE_ID
   WHERE mt.VIEW_YN   = 'Y'
