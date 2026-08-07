@@ -47,7 +47,7 @@ const ColumnTab = (() => {
     ];
     if (includeOrder) arr.push({ label:'컬럼 순서', hint:'(생략 시 마지막)', type:'number', name:'columnOrder', id:`${prefix}-columnOrder` });
     arr.push(
-      { label:'타입', req:true, type:'select', name:'dataType', id:`${prefix}-dataType`, code:'DATA_TYPE', includeEmpty:false },
+      { label:'타입', req: prefix !== 'col-mod', type:'select', name:'dataType', id:`${prefix}-dataType`, code:'DATA_TYPE', includeEmpty: prefix === 'col-mod' },
       { label:'길이', type:'number', name:'dataLength', id:`${prefix}-dataLength` },
       { label:'정밀도', type:'number', name:'dataPrecision', id:`${prefix}-dataPrecision` },
       { label:'소수 자릿수', type:'number', name:'dataScale', id:`${prefix}-dataScale` },
@@ -59,7 +59,7 @@ const ColumnTab = (() => {
       { label:'설명', name:'description', id:`${prefix}-description`, full:true },
       { type:'check', name:'pciYn', id:`${prefix}-pciYn`, label:'개인신용정보 (개인정보 포괄)', chip:'pci' },
       { label:'PCI 분류', type:'select', name:'pciCategoryCd', id:`${prefix}-pciCategoryCd`, code:'PCI_CATEGORY' },
-      { label:'민감도', type:'select', name:'sensitivityCd', id:`${prefix}-sensitivityCd`, code:'SENSITIVITY', includeEmpty:false },
+      { label:'민감도', type:'select', name:'sensitivityCd', id:`${prefix}-sensitivityCd`, code:'SENSITIVITY', includeEmpty: prefix === 'col-mod' },
       { type:'check', name:'encryptionYn', id:`${prefix}-encryptionYn`, label:'암호화' },
       { label:'암호화 알고리즘', name:'encryptionAlg', id:`${prefix}-encryptionAlg`, placeholder:'AES256' },
       { type:'check', name:'maskingYn', id:`${prefix}-maskingYn`, label:'마스킹' },
@@ -201,7 +201,7 @@ const ColumnTab = (() => {
     ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, ${Utils.q(c.sensitivityCd || 'LOW')},
     ${Utils.yn(c.encryptionYn)}, ${Utils.q(c.encryptionAlg)}, ${Utils.yn(c.maskingYn)}, ${Utils.q(c.maskingRuleCd)},
     ${Utils.q(c.retentionPeriodCd)}, ${Utils.q(c.tosCd)},
-    'ACTIVE', NULL,
+    ${Utils.q(c.statusCd || 'ACTIVE')}, NULL,
     ${Utils.auditCols(emp).insert}
 );`;
 
@@ -233,21 +233,21 @@ const ColumnTab = (() => {
     }
     // 길이/정밀도/스케일만 건드리면 미조작 타입 셀렉트의 첫 값(VARCHAR2)이
     // MODIFY에 실려 물리 타입이 통째로 바뀐다. 타입을 함께 명시하게 강제한다.
-    const dataTypeTouched = isTouched('col-mod', 'dataType');
+    // 변경 폼의 타입 셀렉트는 '(변경 안 함)' 빈 값이 기본이다.
+    // 값이 비어 있으면 타입 절을 만들지 않는다 — 폼 기본값이 새어 나갈 여지가 없다.
+    const dataTypeTouched = !!c.dataType;
     const typeArgTouched  = ['dataLength','dataPrecision','dataScale']
       .some(f => isTouched('col-mod', f));
     if (typeArgTouched && !dataTypeTouched) {
-      errs.push('길이·정밀도·소수 자릿수를 바꾸려면 타입도 함께 선택하세요. (미선택 시 타입이 VARCHAR2로 변경됩니다)');
+      errs.push('길이·정밀도·소수 자릿수를 바꾸려면 타입도 함께 선택하세요. (Oracle의 MODIFY는 타입 없이 길이만 바꿀 수 없습니다)');
     }
     // NOT NULL 메타 컬럼은 빈 값으로 비울 수 없다 (ORA-01407).
     if (isTouched('col-mod', 'statusCd') && !c.statusCd) {
       errs.push('상태(STATUS_CD)는 비울 수 없습니다. 값을 선택하세요.');
     }
-    if (isTouched('col-mod', 'sensitivityCd') && !c.sensitivityCd) {
-      errs.push('민감도(SENSITIVITY_CD)는 비울 수 없습니다. 값을 선택하세요.');
-    }
     // 아무 항목도 건드리지 않으면 감사 컬럼만 갱신하는 무의미한 HIST가 쌓인다.
-    const changedFields = COL_FIELDS.filter(f => f !== 'colName' && isTouched('col-mod', f));
+    const changedFields = COL_FIELDS.filter(f => f !== 'colName' && isTouched('col-mod', f))
+      .concat(c.dataType ? ['dataType'] : [], c.sensitivityCd ? ['sensitivityCd'] : []);
     if (!changedFields.length) {
       errs.push('변경할 항목을 하나 이상 수정하세요. 손대지 않은 필드는 UPDATE에 포함되지 않습니다.');
     }
@@ -288,7 +288,7 @@ const ColumnTab = (() => {
     const sets = [
       setIfTouched('LOGICAL_NAME',        'logicalName',       Utils.q(c.logicalName)),
       setIfTouched('DESCRIPTION',         'description',       Utils.q(c.description)),
-      setIfTouched('DATA_TYPE',           'dataType',          Utils.q(c.dataType)),
+      c.dataType ? `DATA_TYPE = ${Utils.q(c.dataType)}` : null,
       setIfTouched('DATA_LENGTH',         'dataLength',        Utils.num(c.dataLength)),
       setIfTouched('DATA_PRECISION',      'dataPrecision',     Utils.num(c.dataPrecision)),
       setIfTouched('DATA_SCALE',          'dataScale',         Utils.num(c.dataScale)),
@@ -299,7 +299,7 @@ const ColumnTab = (() => {
       setIfTouched('FK_YN',               'fkYn',              Utils.yn(c.fkYn)),
       setIfTouched('PCI_YN',              'pciYn',             Utils.yn(c.pciYn)),
       setIfTouched('PCI_CATEGORY_CD',     'pciCategoryCd',     Utils.q(c.pciCategoryCd)),
-      setIfTouched('SENSITIVITY_CD',      'sensitivityCd',     Utils.q(c.sensitivityCd)),
+      c.sensitivityCd ? `SENSITIVITY_CD = ${Utils.q(c.sensitivityCd)}` : null,
       setIfTouched('ENCRYPTION_YN',       'encryptionYn',      Utils.yn(c.encryptionYn)),
       setIfTouched('ENCRYPTION_ALG',      'encryptionAlg',     Utils.q(c.encryptionAlg)),
       setIfTouched('MASKING_YN',          'maskingYn',         Utils.yn(c.maskingYn)),
@@ -439,5 +439,6 @@ COMMIT;
     UI.clearValidation();
   }
 
-  return { init, generate, clear };
+  // colFields/COL_FIELDS는 tests/t_field_ids.js의 불변식 검사용으로 노출한다.
+  return { init, generate, clear, _colFields: colFields, _COL_FIELDS: COL_FIELDS };
 })();

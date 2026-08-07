@@ -11,6 +11,7 @@ function makeEl(id, opts = {}) {
 
 function buildCtx(els) {
   const reg = new Map(Object.entries(els));
+  // reg는 호출자가 이후에도 요소를 추가할 수 있도록 그대로 반환한다.
   const out = { value: null };
   const doc = {
     getElementById: id => reg.get(id) || null,

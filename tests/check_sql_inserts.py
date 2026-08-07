@@ -85,3 +85,4 @@ for path in sys.argv[1:]:
     total += n; bad_total += bad
     print(f"{path}: INSERT {n}개, 불일치 {bad}개")
 print(f"\n합계: INSERT {total}개, 불일치 {bad_total}개")
+sys.exit(1 if bad_total else 0)
