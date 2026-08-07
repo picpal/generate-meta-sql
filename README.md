@@ -50,11 +50,22 @@ generate-meta-sql/
 │   ├── 06_func_idx_backfill.sql          [선택] 함수기반 인덱스 사후 보강
 │   ├── 07_view_gen_nonpci.sql            [선택] 비-PCI VIEW DDL 자동 생성
 │   ├── 07a_view_review_sample.sql        [선택] 비-PCI VIEW 생성 전 보안검토 실데이터 시트
+│   ├── 10_meta_change_templates.sql      [운영] 메타 증분 변경 템플릿 9종
+│   ├── 11_bulk_backfill.sql              [운영] 초기 적재 직후 대량 보정
 │   └── 99_rollback.sql                   [긴급] 전체 롤백
 ├── DB_메타정보_관리체계_표준설계.md      메타 표준 설계서 (명세 · 표 · 설계의도)
 ├── SQL_검증리포트.md                     사내 반입 전 SQL 검증 리포트
-└── 운영가이드.md                         사내 운영 가이드 (실행 순서 · 트러블슈팅)
+├── 운영가이드.md                         사내 운영 가이드 (실행 순서 · 트러블슈팅)
+└── 사용자매뉴얼.md                       ★ 담당자용 상황별 매뉴얼 (먼저 볼 것)
 ```
+
+## 먼저 읽을 문서
+
+| 나는 | 문서 |
+|---|---|
+| 메타를 직접 변경하는 담당자다 | [사용자매뉴얼.md](사용자매뉴얼.md) — 상황별 실행 순서 |
+| 메타 체계를 설치·운영하는 사람이다 | [운영가이드.md](운영가이드.md) |
+| 표준 명세가 궁금하다 | [DB_메타정보_관리체계_표준설계.md](DB_메타정보_관리체계_표준설계.md) |
 
 ## 사내 반입 후 SQL 실행 순서 (필수)
 
@@ -63,7 +74,15 @@ generate-meta-sql/
 3. (선택) [`sql/02a_cd_tos_template.sql`](sql/02a_cd_tos_template.sql) — 사내 약관 코드
 4. [`sql/03_initial_load.sql`](sql/03_initial_load.sql) — 카탈로그 → 메타 적재 (실행 전 SVC 스키마 치환 필수)
 
-상세 절차·검증·트러블슈팅: [운영가이드.md](운영가이드.md) 참조.
+## 초기 적재 이후 (일상 운영)
+
+메타 변경의 **기본 경로는 SQL 템플릿**이다. 웹앱은 단건 변경 SQL을 폼으로 생성하는 보조 도구이며 필수가 아니다.
+
+- 단건 변경 → [`sql/10_meta_change_templates.sql`](sql/10_meta_change_templates.sql)
+- 대량 보정 (담당자·PCI 분류·보관주기) → [`sql/11_bulk_backfill.sql`](sql/11_bulk_backfill.sql)
+- 변경 직후 검증 → [`sql/05_integrity_check.sql`](sql/05_integrity_check.sql) **§5.8**
+
+상세 절차·검증·트러블슈팅: [운영가이드.md](운영가이드.md) · [사용자매뉴얼.md](사용자매뉴얼.md) 참조.
 
 ## 기술 스택
 
