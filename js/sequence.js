@@ -35,7 +35,11 @@ const SequenceTab = (() => {
 
   function renderCreate() { UI.renderFields(document.getElementById('seq-create-body'), seqFields('seq-c', true)); }
   function renderAlter()  {
-    UI.renderFields(document.getElementById('seq-alter-body'), seqFields('seq-a', false));
+    const body = document.getElementById('seq-alter-body');
+    body.innerHTML = `<div class="info"><b>직접 수정한 옵션만</b> ALTER SEQUENCE·메타 UPDATE에 포함됩니다. 손대지 않은 옵션은 운영 시퀀스의 현재 설정이 그대로 유지되므로, 바꿀 옵션만 입력하세요.</div>`;
+    const wrap = document.createElement('div');
+    body.appendChild(wrap);
+    UI.renderFields(wrap, seqFields('seq-a', false));
     bindAlterTouchTracking();
   }
   function renderDrop()   {
@@ -96,6 +100,27 @@ const SequenceTab = (() => {
     return ddl;
   }
 
+  /**
+   * ALTER SEQUENCE 전용 DDL 빌더.
+   * 사용자가 명시적으로 건드린 절만 출력한다. buildDdl()을 재사용하면
+   * 미조작 폼 기본값(INCREMENT BY 1 / CACHE 20 / NOCYCLE / NOORDER)까지
+   * 함께 나가 운영 시퀀스 설정을 조용히 덮어쓴다.
+   */
+  function buildAlterDdl(schema, seq, d) {
+    const parts = [];
+    // 값을 비운 채 건드린 경우 물리 DDL과 메타가 갈라지지 않도록
+    // MIN/MAX는 NOMINVALUE/NOMAXVALUE, CACHE는 NOCACHE로 명시한다.
+    // INCREMENT BY는 비울 수 없다(genAlter에서 검증).
+    if (isTouched('seq-a','incrementBy') && d.incrementBy) parts.push(`  INCREMENT BY ${d.incrementBy}`);
+    if (isTouched('seq-a','minValue'))   parts.push(d.minValue  ? `  MINVALUE ${d.minValue}`  : '  NOMINVALUE');
+    if (isTouched('seq-a','maxValue'))   parts.push(d.maxValue  ? `  MAXVALUE ${d.maxValue}`  : '  NOMAXVALUE');
+    if (isTouched('seq-a','cacheSize'))  parts.push(d.cacheSize ? `  CACHE ${d.cacheSize}`    : '  NOCACHE');
+    if (isTouched('seq-a','cycleYn'))    parts.push(d.cycleYn ? '  CYCLE' : '  NOCYCLE');
+    if (isTouched('seq-a','orderYn'))    parts.push(d.orderYn ? '  ORDER' : '  NOORDER');
+    if (!parts.length) return '';
+    return `ALTER SEQUENCE ${schema}.${seq}\n${parts.join('\n')};\n`;
+  }
+
   function genCreate() {
     const reason = Utils.getReason('change-reason');
     const emp = Utils.getEmpId();
@@ -152,28 +177,43 @@ const SequenceTab = (() => {
     Utils.checkName('시퀀스명', d.seqName ? buildSeqName(d.seqName) : '', errs);
     Utils.checkName('주 사용 테이블', d.usedForTable, errs, false);
     Utils.checkName('주 사용 컬럼', d.usedForColumn, errs, false);
+    // NOT NULL 메타 컬럼은 빈 값으로 비울 수 없다 (ORA-01407).
+    if (isTouched('seq-a','incrementBy')) {
+      if (!d.incrementBy)              errs.push('증가치(INCREMENT_BY)는 비울 수 없습니다.');
+      else if (Number(d.incrementBy) === 0) errs.push('증가치는 0일 수 없습니다.');
+    }
+    if (isTouched('seq-a','purposeCd') && !d.purposeCd) {
+      errs.push('용도(PURPOSE_CD)는 비울 수 없습니다.');
+    }
+    // 아무 항목도 건드리지 않으면 감사 컬럼만 갱신하는 무의미한 HIST가 쌓인다.
+    const ALTER_FIELDS = ['purposeCd','usedForTable','usedForColumn','incrementBy','minValue','maxValue','cacheSize','cycleYn','orderYn'];
+    if (!ALTER_FIELDS.some(f => isTouched('seq-a', f))) {
+      errs.push('변경할 항목을 하나 이상 수정하세요. 손대지 않은 옵션은 ALTER·UPDATE에 포함되지 않습니다.');
+    }
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
     const schema = d.schema.toUpperCase();
     const seq    = buildSeqName(d.seqName);
 
-    // DDL-affecting 옵션 중 하나라도 사용자가 명시적으로 변경했는지 판정.
-    const ddlChanged = ['incrementBy','minValue','maxValue','cacheSize','cycleYn','orderYn']
-      .some(f => isTouched('seq-a', f));
-    const ddl = buildDdl(schema, seq, d, true);
+    // 사용자가 명시적으로 건드린 절만 ALTER에 포함한다.
+    const ddl = buildAlterDdl(schema, seq, d);
+
+    // 메타 SET도 touched 기준. truthy 판정으로 두면 폼 기본값
+    // (INCREMENT BY 1 / CACHE 20 / PURPOSE_CD 'PK')이 미조작 상태로 UPDATE된다.
+    const setIfTouched = (col, field, valExpr) =>
+      isTouched('seq-a', field) ? `${col} = ${valExpr}` : null;
 
     const sets = [
-      d.purposeCd ? `PURPOSE_CD = ${Utils.q(d.purposeCd)}` : null,
-      d.usedForTable ? `USED_FOR_TABLE = ${Utils.q(d.usedForTable.toUpperCase())}` : null,
-      d.usedForColumn ? `USED_FOR_COLUMN = ${Utils.q(d.usedForColumn.toUpperCase())}` : null,
-      d.incrementBy ? `INCREMENT_BY = ${Utils.num(d.incrementBy)}` : null,
-      d.minValue ? `MIN_VALUE = ${Utils.num(d.minValue)}` : null,
-      d.maxValue ? `MAX_VALUE = ${Utils.num(d.maxValue)}` : null,
-      d.cacheSize ? `CACHE_SIZE = ${Utils.num(d.cacheSize)}` : null,
-      isTouched('seq-a','cycleYn') ? `CYCLE_YN = ${Utils.yn(d.cycleYn)}` : null,
-      isTouched('seq-a','orderYn') ? `ORDER_YN = ${Utils.yn(d.orderYn)}` : null,
-      ddlChanged ? `CREATE_DDL = ${Utils.q(ddl.trim())}` : null,
+      setIfTouched('PURPOSE_CD',      'purposeCd',      Utils.q(d.purposeCd)),
+      setIfTouched('USED_FOR_TABLE',  'usedForTable',   Utils.q(d.usedForTable ? d.usedForTable.toUpperCase() : '')),
+      setIfTouched('USED_FOR_COLUMN', 'usedForColumn',  Utils.q(d.usedForColumn ? d.usedForColumn.toUpperCase() : '')),
+      setIfTouched('INCREMENT_BY',    'incrementBy',    Utils.num(d.incrementBy)),
+      setIfTouched('MIN_VALUE',       'minValue',       Utils.num(d.minValue)),
+      setIfTouched('MAX_VALUE',       'maxValue',       Utils.num(d.maxValue)),
+      setIfTouched('CACHE_SIZE',      'cacheSize',      Utils.num(d.cacheSize)),
+      setIfTouched('CYCLE_YN',        'cycleYn',        Utils.yn(d.cycleYn)),
+      setIfTouched('ORDER_YN',        'orderYn',        Utils.yn(d.orderYn)),
       Utils.auditCols(emp).update,
     ].filter(Boolean).join(',\n       ');
 
@@ -189,8 +229,13 @@ const SequenceTab = (() => {
 
     let out = Utils.section(`시퀀스 변경: ${schema}.${seq}`);
     // DDL-affecting 옵션이 하나도 touched 아니면 빈 ALTER SEQUENCE 출력 회피.
-    if (ddlChanged) out += ddl;
-    else out += `-- (DDL-affecting 옵션 미변경 — ALTER SEQUENCE 생략)\n`;
+    if (ddl) {
+      out += ddl;
+      out += `-- [참고] CREATE_DDL 컬럼은 '생성 DDL 원문'이므로 본 ALTER로 갱신하지 않습니다.\n`
+           + `--        정의 원문을 추적한다면 별도로 CREATE_DDL을 최신 정의로 UPDATE 하세요.\n`;
+    } else {
+      out += `-- (DDL-affecting 옵션 미변경 — ALTER SEQUENCE 생략)\n`;
+    }
     out += Utils.section('메타 UPDATE') + update + '\n';
     out += Utils.section('시퀀스 HIST INSERT (U, 변경 후 스냅샷)') + hist + '\n\nCOMMIT;\n';
     Utils.setOutput('seq-output', out);

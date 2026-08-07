@@ -47,7 +47,7 @@ const ColumnTab = (() => {
     ];
     if (includeOrder) arr.push({ label:'컬럼 순서', hint:'(생략 시 마지막)', type:'number', name:'columnOrder', id:`${prefix}-columnOrder` });
     arr.push(
-      { label:'타입', req:true, type:'select', name:'dataType', id:`${prefix}-dataType`, code:'DATA_TYPE', includeEmpty:false },
+      { label:'타입', req: prefix !== 'col-mod', type:'select', name:'dataType', id:`${prefix}-dataType`, code:'DATA_TYPE', includeEmpty: prefix === 'col-mod' },
       { label:'길이', type:'number', name:'dataLength', id:`${prefix}-dataLength` },
       { label:'정밀도', type:'number', name:'dataPrecision', id:`${prefix}-dataPrecision` },
       { label:'소수 자릿수', type:'number', name:'dataScale', id:`${prefix}-dataScale` },
@@ -57,12 +57,12 @@ const ColumnTab = (() => {
       { type:'check', name:'nullableYn', id:`${prefix}-nullableYn`, label:'NULL 허용' },
       { label:'기본값', name:'defaultValue', id:`${prefix}-defaultValue`, placeholder:`'N' / 0 / SYSDATE`, hint:"(SQL 표현식 그대로 — 문자열은 작은따옴표 포함)" },
       { label:'설명', name:'description', id:`${prefix}-description`, full:true },
-      { type:'check', name:'pciYn', id:`${prefix}-pci`, label:'개인신용정보 (개인정보 포괄)', chip:'pci' },
+      { type:'check', name:'pciYn', id:`${prefix}-pciYn`, label:'개인신용정보 (개인정보 포괄)', chip:'pci' },
       { label:'PCI 분류', type:'select', name:'pciCategoryCd', id:`${prefix}-pciCategoryCd`, code:'PCI_CATEGORY' },
-      { label:'민감도', type:'select', name:'sensitivityCd', id:`${prefix}-sensitivityCd`, code:'SENSITIVITY', includeEmpty:false },
-      { type:'check', name:'encryptionYn', id:`${prefix}-enc`, label:'암호화' },
+      { label:'민감도', type:'select', name:'sensitivityCd', id:`${prefix}-sensitivityCd`, code:'SENSITIVITY', includeEmpty: prefix === 'col-mod' },
+      { type:'check', name:'encryptionYn', id:`${prefix}-encryptionYn`, label:'암호화' },
       { label:'암호화 알고리즘', name:'encryptionAlg', id:`${prefix}-encryptionAlg`, placeholder:'AES256' },
-      { type:'check', name:'maskingYn', id:`${prefix}-mask`, label:'마스킹' },
+      { type:'check', name:'maskingYn', id:`${prefix}-maskingYn`, label:'마스킹' },
       { label:'마스킹 규칙', type:'select', name:'maskingRuleCd', id:`${prefix}-maskingRuleCd`, code:'MASKING_RULE' },
       { label:'보관주기(예외)', type:'select', name:'retentionPeriodCd', id:`${prefix}-retentionPeriodCd`, code:'RETENTION_PERIOD' },
       { label:'이용약관(예외)', name:'tosCd', id:`${prefix}-tosCd` },
@@ -86,7 +86,7 @@ const ColumnTab = (() => {
       { label:'기존 컬럼명', req:true, name:'colName', id:'col-mod-colName', full:true },
     ]);
     const body = document.getElementById('col-mod-body');
-    body.innerHTML = `<div class="info">MODIFY는 타입·길이·NULL·DEFAULT 변경에 사용. 컬럼명 자체 변경은 RENAME(별도 스크립트).</div>`;
+    body.innerHTML = `<div class="info"><b>직접 수정한 항목만</b> UPDATE·ALTER에 포함됩니다. 손대지 않은 항목은 기존 메타값이 그대로 유지되므로, 바꿀 항목만 입력하세요. 값을 비운 채 수정하면 <code>NULL</code>로 설정됩니다.<br>컬럼명 자체 변경은 RENAME(별도 스크립트) 대상입니다.</div>`;
     const wrap = document.createElement('div');
     body.appendChild(wrap);
     UI.renderFields(wrap, colFields('col-mod', false));
@@ -201,7 +201,7 @@ const ColumnTab = (() => {
     ${Utils.yn(c.pciYn)}, ${Utils.q(c.pciCategoryCd)}, ${Utils.q(c.sensitivityCd || 'LOW')},
     ${Utils.yn(c.encryptionYn)}, ${Utils.q(c.encryptionAlg)}, ${Utils.yn(c.maskingYn)}, ${Utils.q(c.maskingRuleCd)},
     ${Utils.q(c.retentionPeriodCd)}, ${Utils.q(c.tosCd)},
-    'ACTIVE', NULL,
+    ${Utils.q(c.statusCd || 'ACTIVE')}, NULL,
     ${Utils.auditCols(emp).insert}
 );`;
 
@@ -231,6 +231,26 @@ const ColumnTab = (() => {
     if (c.dataType === 'NUMBER' && c.dataLength) {
       errs.push('NUMBER 타입에 length 입력은 무시됩니다. precision/scale로 변경하세요.');
     }
+    // 길이/정밀도/스케일만 건드리면 미조작 타입 셀렉트의 첫 값(VARCHAR2)이
+    // MODIFY에 실려 물리 타입이 통째로 바뀐다. 타입을 함께 명시하게 강제한다.
+    // 변경 폼의 타입 셀렉트는 '(변경 안 함)' 빈 값이 기본이다.
+    // 값이 비어 있으면 타입 절을 만들지 않는다 — 폼 기본값이 새어 나갈 여지가 없다.
+    const dataTypeTouched = !!c.dataType;
+    const typeArgTouched  = ['dataLength','dataPrecision','dataScale']
+      .some(f => isTouched('col-mod', f));
+    if (typeArgTouched && !dataTypeTouched) {
+      errs.push('길이·정밀도·소수 자릿수를 바꾸려면 타입도 함께 선택하세요. (Oracle의 MODIFY는 타입 없이 길이만 바꿀 수 없습니다)');
+    }
+    // NOT NULL 메타 컬럼은 빈 값으로 비울 수 없다 (ORA-01407).
+    if (isTouched('col-mod', 'statusCd') && !c.statusCd) {
+      errs.push('상태(STATUS_CD)는 비울 수 없습니다. 값을 선택하세요.');
+    }
+    // 아무 항목도 건드리지 않으면 감사 컬럼만 갱신하는 무의미한 HIST가 쌓인다.
+    const changedFields = COL_FIELDS.filter(f => f !== 'colName' && isTouched('col-mod', f))
+      .concat(c.dataType ? ['dataType'] : [], c.sensitivityCd ? ['sensitivityCd'] : []);
+    if (!changedFields.length) {
+      errs.push('변경할 항목을 하나 이상 수정하세요. 손대지 않은 필드는 UPDATE에 포함되지 않습니다.');
+    }
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
@@ -239,12 +259,26 @@ const ColumnTab = (() => {
     const col    = c.colName.toUpperCase();
     const type   = c.dataType ? Utils.typeDDL(c.dataType, c.dataLength, c.dataPrecision, c.dataScale) : null;
 
-    let ddl = `ALTER TABLE ${schema}.${tbl} MODIFY (${col}`;
-    if (type) ddl += ` ${type}`;
-    if (c.defaultValue) ddl += ` DEFAULT ${c.defaultValue}`;
-    ddl += c.nullableYn ? ' NULL' : ' NOT NULL';
-    ddl += ');\n';
-    if (c.logicalName) ddl += `COMMENT ON COLUMN ${schema}.${tbl}.${col} IS ${Utils.q(c.logicalName)};\n`;
+    // 물리 MODIFY는 사용자가 실제로 건드린 절만 포함한다.
+    // (미조작 필드를 폼 기본값으로 출력하면 기존 컬럼 정의를 조용히 덮어쓴다)
+    // 타입 절은 dataType을 명시적으로 선택했을 때만 — 위 검증이 이를 보장한다.
+    const typeTouched     = dataTypeTouched;
+    const defaultTouched  = isTouched('col-mod', 'defaultValue');
+    const nullableTouched = isTouched('col-mod', 'nullableYn');
+
+    let ddl = '';
+    if (typeTouched || defaultTouched || nullableTouched) {
+      ddl = `ALTER TABLE ${schema}.${tbl} MODIFY (${col}`;
+      if (typeTouched && type) ddl += ` ${type}`;
+      if (defaultTouched) ddl += ` DEFAULT ${c.defaultValue || 'NULL'}`;
+      if (nullableTouched) ddl += c.nullableYn ? ' NULL' : ' NOT NULL';
+      ddl += ');\n';
+    } else {
+      ddl = '-- (타입/길이/DEFAULT/NULL 미변경 — ALTER TABLE MODIFY 생략)\n';
+    }
+    if (isTouched('col-mod', 'logicalName') && c.logicalName) {
+      ddl += `COMMENT ON COLUMN ${schema}.${tbl}.${col} IS ${Utils.q(c.logicalName)};\n`;
+    }
 
     // touched 인 경우에만 SET 포함. Utils.q('') === 'NULL' 이므로
     // touched && empty 시 'COL = NULL' 이 자연스럽게 출력되어 빈 값으로 비울 수 있음.
@@ -254,25 +288,25 @@ const ColumnTab = (() => {
     const sets = [
       setIfTouched('LOGICAL_NAME',        'logicalName',       Utils.q(c.logicalName)),
       setIfTouched('DESCRIPTION',         'description',       Utils.q(c.description)),
-      setIfTouched('DATA_TYPE',           'dataType',          Utils.q(c.dataType)),
+      c.dataType ? `DATA_TYPE = ${Utils.q(c.dataType)}` : null,
       setIfTouched('DATA_LENGTH',         'dataLength',        Utils.num(c.dataLength)),
       setIfTouched('DATA_PRECISION',      'dataPrecision',     Utils.num(c.dataPrecision)),
       setIfTouched('DATA_SCALE',          'dataScale',         Utils.num(c.dataScale)),
-      `NULLABLE_YN = ${Utils.yn(c.nullableYn)}`,
+      setIfTouched('NULLABLE_YN',         'nullableYn',        Utils.yn(c.nullableYn)),
       setIfTouched('DEFAULT_VALUE',       'defaultValue',      Utils.q(c.defaultValue)),
       setIfTouched('PK_YN',               'pkYn',              Utils.yn(c.pkYn)),
       setIfTouched('UK_YN',               'ukYn',              Utils.yn(c.ukYn)),
       setIfTouched('FK_YN',               'fkYn',              Utils.yn(c.fkYn)),
-      `PCI_YN = ${Utils.yn(c.pciYn)}`,
+      setIfTouched('PCI_YN',              'pciYn',             Utils.yn(c.pciYn)),
       setIfTouched('PCI_CATEGORY_CD',     'pciCategoryCd',     Utils.q(c.pciCategoryCd)),
-      `SENSITIVITY_CD = ${Utils.q(c.sensitivityCd || 'LOW')}`,
-      `ENCRYPTION_YN = ${Utils.yn(c.encryptionYn)}`,
+      c.sensitivityCd ? `SENSITIVITY_CD = ${Utils.q(c.sensitivityCd)}` : null,
+      setIfTouched('ENCRYPTION_YN',       'encryptionYn',      Utils.yn(c.encryptionYn)),
       setIfTouched('ENCRYPTION_ALG',      'encryptionAlg',     Utils.q(c.encryptionAlg)),
-      `MASKING_YN = ${Utils.yn(c.maskingYn)}`,
+      setIfTouched('MASKING_YN',          'maskingYn',         Utils.yn(c.maskingYn)),
       setIfTouched('MASKING_RULE_CD',     'maskingRuleCd',     Utils.q(c.maskingRuleCd)),
       setIfTouched('RETENTION_PERIOD_CD', 'retentionPeriodCd', Utils.q(c.retentionPeriodCd)),
       setIfTouched('TOS_CD',              'tosCd',             Utils.q(c.tosCd)),
-      c.statusCd ? `STATUS_CD = ${Utils.q(c.statusCd)}` : null,
+      setIfTouched('STATUS_CD',           'statusCd',          Utils.q(c.statusCd)),
       Utils.auditCols(emp).update,
     ].filter(Boolean).join(',\n       ');
 
@@ -287,16 +321,30 @@ const ColumnTab = (() => {
       whereClause: `TABLE_ID = ${tableIdRef} AND COLUMN_NAME = ${Utils.q(col)}`,
     });
 
+    // 제약조건 블록은 해당 플래그를 실제로 건드렸을 때만 출력한다.
+    // (미조작 상태에서 출력하면 이미 존재하는 PK/UK를 재추가해 ORA-02260/02261 유발)
     const tblBase = tbl.replace(/^TB_/, '');
     const constraints = [];
-    if (c.pkYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT PK_${tblBase} PRIMARY KEY (${col});`);
-    else        constraints.push(`-- TODO: PK 해제 시 DROP CONSTRAINT 수동 보완 — 예) ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT PK_${tblBase};`);
-    if (c.ukYn) constraints.push(`ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT UK_${tblBase}_${col} UNIQUE (${col});`);
-    else        constraints.push(`-- TODO: UK 해제 시 DROP CONSTRAINT 수동 보완 — 예) ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT UK_${tblBase}_${col};`);
-    constraints.push(`-- TODO: FK 변경 — ON이면 ADD CONSTRAINT FK_<NAME> FOREIGN KEY (${col}) REFERENCES <REF_TBL>(<REF_COL>); OFF면 DROP CONSTRAINT FK_<NAME>; (현재 ${c.fkYn ? 'ON' : 'OFF'} 의도)`);
+    if (isTouched('col-mod', 'pkYn')) {
+      constraints.push(c.pkYn
+        ? `ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT PK_${tblBase} PRIMARY KEY (${col});`
+        : `-- TODO: PK 해제 — ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT PK_${tblBase};  (제약명 확인 후 실행)`);
+    }
+    if (isTouched('col-mod', 'ukYn')) {
+      constraints.push(c.ukYn
+        ? `ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT UK_${tblBase}_${col} UNIQUE (${col});`
+        : `-- TODO: UK 해제 — ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT UK_${tblBase}_${col};  (제약명 확인 후 실행)`);
+    }
+    if (isTouched('col-mod', 'fkYn')) {
+      constraints.push(c.fkYn
+        ? `-- TODO: FK 추가 — ALTER TABLE ${schema}.${tbl} ADD CONSTRAINT FK_${tblBase}_${col} FOREIGN KEY (${col}) REFERENCES <REF_TBL>(<REF_COL>);`
+        : `-- TODO: FK 해제 — ALTER TABLE ${schema}.${tbl} DROP CONSTRAINT FK_${tblBase}_${col};  (제약명 확인 후 실행)`);
+    }
 
     let out = Utils.section(`컬럼 변경: ${schema}.${tbl}.${col}`) + ddl;
-    out += Utils.section('제약조건 변경 (PK/UK/FK)') + constraints.join('\n') + '\n';
+    if (constraints.length) {
+      out += Utils.section('제약조건 변경 (PK/UK/FK)') + constraints.join('\n') + '\n';
+    }
     out += Utils.section('메타 UPDATE') + update + '\n';
     out += Utils.section('컬럼 HIST INSERT (U, 변경 후 스냅샷)') + hist + '\n\nCOMMIT;\n';
     Utils.setOutput('col-output', out);
@@ -353,7 +401,14 @@ const ColumnTab = (() => {
       // → ALTER TABLE DROP COLUMN 시 Oracle이 해당 인덱스를 자동 DROP하므로 메타도 동기화.
       const idxWhereEmptyAfter = `TABLE_ID = ${tableIdRef} AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic WHERE ic.INDEX_ID = TB_META_INDEX.INDEX_ID AND ic.COLUMN_NAME <> ${Utils.q(col)})`;
       const idxHist = Utils.snapshotHist({ kind:'INDEX', op:'D', reason, empId:emp, whereClause: idxWhereEmptyAfter });
-      out += Utils.section('1. 인덱스 HIST INSERT (D, 컬럼 DROP 후 빈 인덱스가 될 행 스냅샷)') + idxHist + '\n';
+      out += Utils.section('1-1. 인덱스 HIST INSERT (D, 컬럼 DROP 후 빈 인덱스가 될 행 스냅샷)') + idxHist + '\n';
+
+      // 표준 §6.8 — 매핑 DELETE 전에 INDEX_COLUMN HIST를 먼저 적재한다.
+      const idxColHist = Utils.snapshotHist({
+        kind:'INDEX_COLUMN', op:'D', reason, empId:emp,
+        whereClause: `COLUMN_NAME = ${Utils.q(col)}\n   AND INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef})`,
+      });
+      out += Utils.section('1-2. 인덱스-컬럼 매핑 HIST INSERT (D, 삭제 전 스냅샷)') + idxColHist + '\n';
 
       out += Utils.section('2. TB_META_INDEX_COLUMN DELETE (해당 컬럼 매핑 제거)') + `DELETE FROM TB_META_INDEX_COLUMN
  WHERE COLUMN_NAME = ${Utils.q(col)}
@@ -384,5 +439,6 @@ COMMIT;
     UI.clearValidation();
   }
 
-  return { init, generate, clear };
+  // colFields/COL_FIELDS는 tests/t_field_ids.js의 불변식 검사용으로 노출한다.
+  return { init, generate, clear, _colFields: colFields, _COL_FIELDS: COL_FIELDS };
 })();

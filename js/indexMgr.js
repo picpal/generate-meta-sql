@@ -31,7 +31,7 @@ const IndexTab = (() => {
     UI.renderFields(document.getElementById('idx-drop-body'), [
       { label:'스키마명', req:true, name:'schema', id:'idx-drop-schema' },
       { label:'인덱스명', req:true, name:'indexName', id:'idx-drop-indexName' },
-      { label:'대상 테이블명', name:'tableName', id:'idx-drop-tableName', hint:'(HIST 참조용)' },
+      { label:'대상 테이블명', req:true, name:'tableName', id:'idx-drop-tableName', placeholder:'TB_MEMBER', hint:'(삭제 범위 한정 — 필수)' },
     ]);
   }
 
@@ -126,11 +126,17 @@ const IndexTab = (() => {
       kind:'INDEX', op:'I', reason, empId:emp,
       whereClause: `TABLE_ID = ${tableIdRef} AND INDEX_NAME = ${Utils.q(idxName)}`,
     });
+    // 표준 §6.8 — TB_META_INDEX_COLUMN 변경도 반드시 HIST를 남긴다.
+    const colHist = Utils.snapshotHist({
+      kind:'INDEX_COLUMN', op:'I', reason, empId:emp,
+      whereClause: `INDEX_ID = ${idxIdRef}`,
+    });
 
     let out = Utils.section(`인덱스 생성: ${schema}.${idxName}`) + ddl;
     out += Utils.section('메타 INSERT (TB_META_INDEX)') + idxInsert + '\n';
     out += Utils.section('메타 INSERT (TB_META_INDEX_COLUMN)') + '\n' + idxColInserts + '\n';
-    out += Utils.section('인덱스 HIST INSERT (I)') + hist + '\n\nCOMMIT;\n';
+    out += Utils.section('인덱스 HIST INSERT (I)') + hist + '\n';
+    out += Utils.section('인덱스-컬럼 매핑 HIST INSERT (I)') + colHist + '\n\nCOMMIT;\n';
     Utils.setOutput('idx-output', out);
     Utils.toast('인덱스 생성 SQL 생성 완료');
   }
@@ -143,20 +149,24 @@ const IndexTab = (() => {
     if (!reason) errs.push('상단 변경 사유 필수.');
     Utils.checkName('스키마명', d.schema, errs);
     Utils.checkName('인덱스명', d.indexName, errs);
-    if (d.tableName) Utils.checkName('테이블명', Utils.ensurePrefix(d.tableName, 'TB'), errs);
+    // 테이블명 필수 — 비우면 INDEX_NAME만으로 전 스키마의 동명 인덱스 메타가 삭제된다.
+    Utils.checkName('대상 테이블명', d.tableName ? Utils.ensurePrefix(d.tableName, 'TB') : '', errs);
     if (errs.length) { UI.showValidation(errs); return; }
     UI.clearValidation();
 
     const schema  = d.schema.toUpperCase();
     const idxName = d.indexName.toUpperCase();
-    const tbl     = d.tableName ? Utils.ensurePrefix(d.tableName, 'TB') : '';
+    const tbl     = Utils.ensurePrefix(d.tableName, 'TB');
 
-    const tableIdRef = tbl ? `(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME=${Utils.q(schema)} AND TABLE_NAME=${Utils.q(tbl)})` : null;
-    const whereIdx = tbl
-      ? `TABLE_ID = ${tableIdRef} AND INDEX_NAME = ${Utils.q(idxName)}`
-      : `INDEX_NAME = ${Utils.q(idxName)}`;
+    const tableIdRef = `(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME=${Utils.q(schema)} AND TABLE_NAME=${Utils.q(tbl)})`;
+    const whereIdx = `TABLE_ID = ${tableIdRef} AND INDEX_NAME = ${Utils.q(idxName)}`;
 
     const hist = Utils.snapshotHist({ kind:'INDEX', op:'D', reason, empId:emp, whereClause: whereIdx });
+    // 표준 §6.8 — 매핑 DELETE 전에 INDEX_COLUMN HIST를 먼저 적재한다.
+    const colHist = Utils.snapshotHist({
+      kind:'INDEX_COLUMN', op:'D', reason, empId:emp,
+      whereClause: `INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE ${whereIdx})`,
+    });
 
     let out = Utils.section(`인덱스 삭제: ${schema}.${idxName}`);
     out += `-- ═══════════════════════════════════════════════════════════════════
@@ -166,13 +176,20 @@ const IndexTab = (() => {
 -- 단계가 실패해도 이미 commit된 단계는 롤백되지 않습니다.
 --
 -- 실패 발생 시 다음을 반드시 확인:
---   1) HIST 적재 여부 (TB_META_INDEX_HIST)
+--   1) HIST 적재 여부 (TB_META_INDEX_HIST, TB_META_INDEX_COLUMN_HIST)
 --   2) 메타 DELETE 여부 (TB_META_INDEX_COLUMN, TB_META_INDEX)
 --   3) Oracle 측 실제 인덱스 잔존 여부
 -- 부정합이 발견되면 수동 cleanup으로 일관성 회복하세요.
 -- ═══════════════════════════════════════════════════════════════════
 `;
-    out += Utils.section('1. 인덱스 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
+    out += Utils.section('0. 삭제 대상 확인 (실행 전 정확히 1건인지 확인)') + `SELECT mi.INDEX_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mi.INDEX_NAME, mi.STATUS_CD
+  FROM TB_META_INDEX mi
+  JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+ WHERE mt.SCHEMA_NAME = ${Utils.q(schema)}
+   AND mt.TABLE_NAME  = ${Utils.q(tbl)}
+   AND mi.INDEX_NAME  = ${Utils.q(idxName)};\n`;
+    out += Utils.section('1-1. 인덱스-컬럼 매핑 HIST INSERT (D, 삭제 전 스냅샷)') + colHist + '\n';
+    out += Utils.section('1-2. 인덱스 HIST INSERT (D, 삭제 전 스냅샷)') + hist + '\n';
     out += Utils.section('2. 인덱스-컬럼 매핑 DELETE') + `DELETE FROM TB_META_INDEX_COLUMN
  WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE ${whereIdx});\n`;
     out += Utils.section('3. 메타 DELETE') + `DELETE FROM TB_META_INDEX WHERE ${whereIdx};\n`;

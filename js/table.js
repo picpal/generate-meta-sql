@@ -282,9 +282,15 @@ const TableTab = (() => {
       };
 
       const viewHeaderComment =
+        `-- ═══════════════════════════════════════════════════════════════════\n` +
+        `-- [주의] 이 뷰는 PCI 필터를 적용하지 않습니다 (전 컬럼 노출 + 마스킹만).\n` +
+        `--        비-PCI 컬럼만 노출하는 보안 배포용 뷰는 sql/07_view_gen_nonpci.sql\n` +
+        `--        로 생성하십시오 (이름 규칙도 VW_<원본명 전체>로 다릅니다).\n` +
+        `-- ───────────────────────────────────────────────────────────────────\n` +
         `-- [참고] 마스킹 함수(FN_MASK_*)는 사내 표준에 정의되어 있어야 합니다.\n` +
         `-- 미정의 시 ORA-00904 'invalid identifier'. 코드값(MASKING_RULE_CD)당 함수 매핑은\n` +
-        `-- js/table.js의 MASK_FN_MAP 상수에서 관리합니다.\n`;
+        `-- js/table.js의 MASK_FN_MAP 상수에서 관리합니다.\n` +
+        `-- ═══════════════════════════════════════════════════════════════════\n`;
 
       viewDdl = `${viewHeaderComment}CREATE OR REPLACE VIEW ${schema}.${vwName} AS\nSELECT\n${cols.map(viewColExpr).join(',\n')}\nFROM ${schema}.${tbl};\n`;
     }
@@ -487,18 +493,11 @@ WHERE TABLE_ID = ${tableIdRef};`;
 -- ═══════════════════════════════════════════════════════════════════
 `;
 
-    // 1) INDEX_COLUMN HIST + DELETE — Utils.HIST_COLS에 미정의이므로 §6.8 raw SQL 인라인.
-    const indexColCols = ['INDEX_ID','COLUMN_POS','COLUMN_NAME','SORT_ORDER','FUNC_EXPRESSION'];
-    const indexColHist = `INSERT INTO TB_META_INDEX_COLUMN_HIST (
-    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
-    ${indexColCols.join(', ')}
-)
-SELECT
-    SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, ${Utils.q(emp)}, ${Utils.q(reason)},
-    ${indexColCols.map(c => 'mic.' + c).join(', ')}
-FROM TB_META_INDEX_COLUMN mic
-JOIN TB_META_INDEX mi ON mi.INDEX_ID = mic.INDEX_ID
-WHERE mi.TABLE_ID = ${tableIdRef};`;
+    // 1) INDEX_COLUMN HIST + DELETE
+    const indexColHist = Utils.snapshotHist({
+      kind:'INDEX_COLUMN', op:'D', reason, empId:emp,
+      whereClause: `INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef})`,
+    });
     out += Utils.section('1-1. 인덱스-컬럼 매핑 HIST INSERT (D)') + indexColHist + '\n';
     out += Utils.section('1-2. 인덱스-컬럼 매핑 DELETE') + `DELETE FROM TB_META_INDEX_COLUMN
  WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = ${tableIdRef});\n`;
@@ -526,6 +525,18 @@ WHERE mi.TABLE_ID = ${tableIdRef};`;
     });
     out += Utils.section('4-1. 테이블 메타 HIST INSERT (D)') + tableHist + '\n';
     out += Utils.section('4-2. 테이블 메타 DELETE') + `DELETE FROM TB_META_TABLE WHERE ${whereTbl};\n`;
+
+    // 4-3) 연결 시퀀스 메타 점검 — TB_META_SEQUENCE는 TABLE_ID FK가 없으므로
+    //      본 절차로 자동 정리되지 않는다. 방치하면 동일 테이블 재생성 시
+    //      UK_META_SEQUENCE(SCHEMA_NAME, SEQUENCE_NAME) 충돌이 난다.
+    out += Utils.section('4-3. 연결 시퀀스 메타 점검 (자동 삭제되지 않음 — 직접 확인)') +
+`-- 아래 결과가 있으면 시퀀스 메타가 남아 있습니다.
+--   · 시퀀스를 계속 사용 → 그대로 둔다 (재생성 시 '시퀀스 동시 생성' 옵션을 끌 것)
+--   · 시퀀스도 폐기      → 탭 04 '삭제'로 HIST 적재 + 메타 DELETE + DROP SEQUENCE 수행
+SELECT SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME, USED_FOR_TABLE, USED_FOR_COLUMN, STATUS_CD
+  FROM TB_META_SEQUENCE
+ WHERE SCHEMA_NAME = ${Utils.q(schema)}
+   AND USED_FOR_TABLE = ${Utils.q(tbl)};\n`;
 
     // 5) DROP TABLE
     out += Utils.section('5. 물리 DROP') + `DROP TABLE ${schema}.${tbl};\n\nCOMMIT;\n`;

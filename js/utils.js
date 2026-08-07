@@ -38,7 +38,7 @@ const Utils = {
     return upper.startsWith(pre + '_') ? upper : (pre + '_' + upper);
   },
 
-  /** 이름 검증. 영문/숫자/_ 만 허용, 30자 이하(Oracle 12c 미만 호환) */
+  /** 이름 검증. 영문 대문자/숫자/_ 만 허용, 128자 이하(Oracle 12.2+ 식별자 한도) */
   validateName(name) {
     if (!name) return 'name required';
     if (!/^[A-Z][A-Z0-9_]*$/.test(name)) return '영문 대문자/숫자/_ 만 허용';
@@ -212,6 +212,9 @@ const Utils = {
       'STATUS_CD',
       'CREATED_BY','CREATED_AT','UPDATED_BY','UPDATED_AT',
     ],
+    INDEX_COLUMN: [
+      'INDEX_ID','COLUMN_POS','COLUMN_NAME','SORT_ORDER','FUNC_EXPRESSION',
+    ],
     SEQUENCE: [
       'SEQUENCE_ID','SCHEMA_NAME','SEQUENCE_NAME',
       'MIN_VALUE','MAX_VALUE','INCREMENT_BY','START_WITH','CACHE_SIZE',
@@ -223,10 +226,11 @@ const Utils = {
   },
 
   HIST_META: {
-    TABLE:    { tbl: 'TB_META_TABLE_HIST',    src: 'TB_META_TABLE' },
-    COLUMN:   { tbl: 'TB_META_COLUMN_HIST',   src: 'TB_META_COLUMN' },
-    INDEX:    { tbl: 'TB_META_INDEX_HIST',    src: 'TB_META_INDEX' },
-    SEQUENCE: { tbl: 'TB_META_SEQUENCE_HIST', src: 'TB_META_SEQUENCE' },
+    TABLE:        { tbl: 'TB_META_TABLE_HIST',        src: 'TB_META_TABLE' },
+    COLUMN:       { tbl: 'TB_META_COLUMN_HIST',       src: 'TB_META_COLUMN' },
+    INDEX:        { tbl: 'TB_META_INDEX_HIST',        src: 'TB_META_INDEX' },
+    INDEX_COLUMN: { tbl: 'TB_META_INDEX_COLUMN_HIST', src: 'TB_META_INDEX_COLUMN' },
+    SEQUENCE:     { tbl: 'TB_META_SEQUENCE_HIST',     src: 'TB_META_SEQUENCE' },
   },
 
   snapshotHist({ kind, op, reason, empId, whereClause, valuesMap }) {
