@@ -101,7 +101,7 @@ generate-meta-sql
 version   : ${VERSION}
 commit    : ${SHA}
 built_at  : ${BUILT_AT} (UTC)
-files     : $(git ls-files | wc -l | tr -d ' ')
+sources   : $(git ls-files | wc -l | tr -d ' ')개 (+ 이 파일)
 
 이 패키지가 어떤 소스에서 나왔는지를 기록한다.
 사내 반입 후 문의 시 version 과 commit 을 함께 알릴 것.
