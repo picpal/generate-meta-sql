@@ -23,6 +23,7 @@ done
 step "폼 필드 정의 불변식" node tests/t_field_ids.js
 step "컬럼 변경 SQL 생성"  node tests/t_column.js
 step "시퀀스 변경 SQL 생성" node tests/t_seq.js
+step "대상 스키마 DEFINE"  python3 tests/check_schema_define.py
 step "SQL INSERT 정합성"   python3 tests/check_sql_inserts.py sql/01_meta_ddl.sql sql/02_common_code.sql sql/02a_cd_tos_template.sql sql/03_initial_load.sql sql/04_drift_check.sql sql/05_integrity_check.sql sql/06_func_idx_backfill.sql sql/07_view_gen_nonpci.sql sql/07a_view_review_sample.sql sql/10_meta_change_templates.sql sql/11_bulk_backfill.sql sql/99_rollback.sql
 
 if [ $rc -eq 0 ]; then echo "전체 통과"; else echo "실패 항목 있음"; fi

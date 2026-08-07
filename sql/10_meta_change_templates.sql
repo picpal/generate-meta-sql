@@ -679,9 +679,20 @@ DELETE FROM TB_META_COLUMN
 COMMIT;
 
 
--- (9) 인덱스 메타 재적재 — 물리 DROP 이후, 실제 카탈로그 기준으로 살아남은 인덱스를 다시 등록
---     아래로 실물을 확인한 뒤 §10.7 '등록'의 (2)~(5)를 인덱스마다 실행한다
---     (물리 DDL 블록은 실행하지 않는다 — 인덱스는 이미 존재하거나 사라졌다).
+-- (9) 인덱스 메타 재적재 — 물리 DROP 이후, 살아남은 인덱스를 다시 등록
+--
+--     ★ sql/03_initial_load.sql 을 재실행하면 끝난다.
+--       03은 INDEX·INDEX_COLUMN을 카탈로그에서 적재하고 가드가 행 단위라
+--       (8)에서 지운 것 중 실물이 남아 있는 인덱스만 정확히 다시 등록된다.
+--       인덱스마다 §10.7을 반복할 필요가 없다.
+--
+--       @sql/03_initial_load.sql
+--
+--       대가: CHANGE_REASON이 'INITIAL_LOAD'로 들어간다. 재등록 사유를 이력에
+--       남겨야 하면 아래 SELECT로 실물을 확인한 뒤 §10.7 '등록'의 (2)~(5)를
+--       인덱스마다 실행한다 (물리 DDL 블록은 실행하지 않는다).
+--
+--     (9-1) 재실행 전후로 무엇이 빠져 있는지 확인 — 0건이면 재적재 완료
 SELECT i.INDEX_NAME, ic.COLUMN_NAME, ic.COLUMN_POSITION, ic.DESCEND
   FROM ALL_INDEXES i
   JOIN ALL_IND_COLUMNS ic
@@ -1125,7 +1136,7 @@ SELECT (SELECT COUNT(*) FROM TB_META_TABLE
 -- ─────────────────────────────────────────────────────────────────────
 --   @sql/03_initial_load.sql
 --
---   · 대상 스키마('SVC1','SVC2' 치환분)가 &SCHEMA 를 포함하는지 먼저 확인한다.
+--   · 03 상단의 DEFINE TARGET_SCHEMAS 가 &SCHEMA 를 포함하는지 먼저 확인한다.
 --   · NOT EXISTS 가드가 행 단위라 이미 있는 다른 테이블은 건드리지 않는다.
 --   · CHANGE_REASON은 'INITIAL_LOAD'로 들어간다. 재생성 사유는 (4) 복원의
 --     HIST(U)에 &REASON 으로 남으므로 추적이 끊기지 않는다.

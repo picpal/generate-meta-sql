@@ -4,8 +4,7 @@
 -- 선행: 02_common_code.sql
 -- 후행: (없음 — 이후 비즈니스 메타 수기 UPDATE)
 -- 출처: DB_메타정보_관리체계_표준설계.md §7 (7.1~7.5)
--- 사전 수정 필요: WHERE OWNER IN ('SVC1','SVC2', ...) 의 스키마 목록을
---               실제 대상 스키마로 교체한 뒤 실행
+-- 사전 수정 필요: 아래 DEFINE TARGET_SCHEMAS 한 줄만 고친다 (5개 WHERE가 참조)
 -- 구성: 7.x 본 적재 → 7.5.x HIST 적재 를 테이블 단위로 번갈아 실행하여
 --       동일 트랜잭션으로 묶고, 마지막에 일괄 COMMIT.
 -- 정책: 저장 프로시저/함수/트리거 및 익명 PL/SQL 블록 없이 SQL DDL/DML만 사용한다.
@@ -13,6 +12,21 @@
 -- 재실행 안전성: 본 INSERT는 NOT EXISTS 가드, HIST INSERT는
 --                ('I','INITIAL_LOAD') 중복 가드로 누적 중복을 방지한다.
 -- =====================================================================
+
+-- 오류 시 중단 (필수)
+--   이 파일은 마지막에 한 번만 COMMIT한다. 이 두 줄이 없으면 중간 INSERT가
+--   실패해도 SQL*Plus가 나머지를 계속 실행하고 부분 적재분을 커밋한다.
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
+
+SET DEFINE ON
+SET VERIFY ON      -- 치환 결과를 화면에 남겨 대상 스키마를 눈으로 확인한다
+
+-- ★★ 실행 전 이 한 줄만 고친다 ★★
+--   아래 5개 WHERE 절(테이블·뷰·인덱스·인덱스컬럼·시퀀스)이 모두 이 값을 참조한다.
+--   바깥 큰따옴표는 SQL*Plus용이다. 값 자체는 작은따옴표로 감싼 목록이어야 한다.
+--   예: DEFINE TARGET_SCHEMAS = "'OWNER1','OWNER2','OWNER3'"
+DEFINE TARGET_SCHEMAS = "'SVC1','SVC2'"
 
 -- =====================================================================
 -- §7.1 TB_META_TABLE — 테이블/뷰 적재 (VIEW_YN으로 구분)
@@ -44,7 +58,7 @@ SELECT
 FROM ALL_TABLES t
 LEFT JOIN ALL_TAB_COMMENTS c
        ON c.OWNER = t.OWNER AND c.TABLE_NAME = t.TABLE_NAME
-WHERE t.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE t.OWNER IN (&TARGET_SCHEMAS)
   AND t.TABLE_NAME NOT LIKE 'BIN$%'        -- recycle bin 제외
   AND t.TABLE_NAME NOT LIKE 'TB_META_%'    -- 자기 자신 제외
   AND t.TEMPORARY = 'N'                    -- GTT 제외
@@ -83,7 +97,7 @@ SELECT
 FROM ALL_VIEWS v
 LEFT JOIN ALL_TAB_COMMENTS c
        ON c.OWNER = v.OWNER AND c.TABLE_NAME = v.VIEW_NAME
-WHERE v.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE v.OWNER IN (&TARGET_SCHEMAS)
   AND v.VIEW_NAME NOT LIKE 'BIN$%'
   AND v.VIEW_NAME NOT LIKE 'TB_META_%'
   AND NOT EXISTS (
@@ -261,7 +275,7 @@ LEFT JOIN ALL_CONSTRAINTS pkc
       AND pkc.INDEX_NAME     = i.INDEX_NAME
       AND pkc.CONSTRAINT_TYPE = 'P'
       AND pkc.STATUS          = 'ENABLED'
-WHERE i.TABLE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE i.TABLE_OWNER IN (&TARGET_SCHEMAS)
   AND NOT EXISTS (
         SELECT 1 FROM TB_META_INDEX m
          WHERE m.TABLE_ID   = mt.TABLE_ID
@@ -302,7 +316,7 @@ JOIN TB_META_TABLE mt
   ON mt.SCHEMA_NAME = ic.TABLE_OWNER AND mt.TABLE_NAME = ic.TABLE_NAME
 JOIN TB_META_INDEX mi
   ON mi.TABLE_ID = mt.TABLE_ID AND mi.INDEX_NAME = ic.INDEX_NAME
-WHERE ic.TABLE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE ic.TABLE_OWNER IN (&TARGET_SCHEMAS)
   AND NOT EXISTS (
         SELECT 1 FROM TB_META_INDEX_COLUMN m
          WHERE m.INDEX_ID   = mi.INDEX_ID
@@ -351,7 +365,7 @@ SELECT
     'ETC',                    -- 용도는 담당자 업데이트
     'ACTIVE', USER, USER
 FROM ALL_SEQUENCES s
-WHERE s.SEQUENCE_OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE s.SEQUENCE_OWNER IN (&TARGET_SCHEMAS)
   AND s.SEQUENCE_NAME NOT LIKE 'SEQ_META_%'  -- 메타 시퀀스 자기 자신 제외 (§7.1 TB_META_% 가드와 일관)
   AND NOT EXISTS (
         SELECT 1 FROM TB_META_SEQUENCE m

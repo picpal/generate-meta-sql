@@ -3,11 +3,17 @@
 -- 실행 위치: 초기 적재(03) 완료 후, 일 1회 배치 권장
 -- 선행: 01/02/03 적재 완료
 -- 출처: DB_메타정보_관리체계_표준설계.md §8 (8.1~8.3)
--- 사전 수정 필요: WHERE OWNER IN ('SVC1','SVC2', ...) 의 스키마 목록을
---               실제 대상 스키마로 교체한 뒤 실행 (§8.1만 해당)
+-- 사전 수정 필요: 아래 DEFINE TARGET_SCHEMAS 한 줄만 고친다 (§8.1만 해당)
 -- 정책: SQL DDL/DML만 사용. 결과를 별도 테이블에 적재하거나 메일 발송용
 --       으로 SPOOL/CSV 추출하여 활용한다.
 -- =====================================================================
+
+SET DEFINE ON
+SET VERIFY ON
+
+-- ★★ 실행 전 이 한 줄만 고친다 ★★  (03_initial_load.sql 과 같은 값이어야 한다)
+--   예: DEFINE TARGET_SCHEMAS = "'OWNER1','OWNER2','OWNER3'"
+DEFINE TARGET_SCHEMAS = "'SVC1','SVC2'"
 
 -- =====================================================================
 -- §8.1 메타에 없지만 실제 DB에는 있는 객체 (Drift: META 누락)
@@ -19,7 +25,7 @@ SELECT t.OWNER, t.TABLE_NAME, 'N' AS VIEW_YN
 FROM ALL_TABLES t
 LEFT JOIN TB_META_TABLE mt
        ON mt.SCHEMA_NAME = t.OWNER AND mt.TABLE_NAME = t.TABLE_NAME
-WHERE t.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE t.OWNER IN (&TARGET_SCHEMAS)
   AND mt.TABLE_ID IS NULL
   AND t.TABLE_NAME NOT LIKE 'BIN$%'
   AND t.TABLE_NAME NOT LIKE 'TB_META_%'
@@ -31,7 +37,7 @@ SELECT v.OWNER, v.VIEW_NAME, 'Y' AS VIEW_YN
 FROM ALL_VIEWS v
 LEFT JOIN TB_META_TABLE mt
        ON mt.SCHEMA_NAME = v.OWNER AND mt.TABLE_NAME = v.VIEW_NAME
-WHERE v.OWNER IN ('SVC1','SVC2'/* 대상 스키마 목록 */)
+WHERE v.OWNER IN (&TARGET_SCHEMAS)
   AND mt.TABLE_ID IS NULL
   AND v.VIEW_NAME NOT LIKE 'BIN$%'
   AND v.VIEW_NAME NOT LIKE 'TB_META_%'
