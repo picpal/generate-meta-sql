@@ -46,6 +46,23 @@ for path in FILES:
         print(f'  ✗ {path}: &TARGET_SCHEMAS 참조가 없다 — DEFINE 이 실제로 쓰이지 않는다')
         fail += 1
 
+# 11의 대량 보정은 작업 테이블로 대상을 고정한다. LISTAGG → DEFINE IDS 방식은
+# ORA-01489(4000byte)·ORA-01795(IN 1000개)·0건일 때 이전 배치 IDS 잔존이라는
+# 실패 모드를 안고 있어 걷어냈다. 되살아나면 여기서 잡는다.
+BULK = 'sql/11_bulk_backfill.sql'
+try:
+    bulk = open(BULK, encoding='utf-8').read()
+except OSError as e:
+    print(f'  ✗ {BULK}: 읽기 실패 — {e}')
+    fail += 1
+else:
+    for pat, why in [(r'^(?!\s*--).*\bIN\s*\(\s*&IDS\s*\)', 'IN (&IDS) 방식이 되살아났다'),
+                     (r'^(?!\s*--).*\bLISTAGG\s*\(',        'LISTAGG 기반 ID 고정이 되살아났다')]:
+        for m in re.finditer(pat, bulk, re.M | re.I):
+            line_no = bulk[:m.start()].count('\n') + 1
+            print(f'  ✗ {BULK}:{line_no}: {why} — 작업 테이블 EXISTS 방식을 쓸 것')
+            fail += 1
+
 if len(values) == len(FILES) and len(set(values.values())) > 1:
     print('  ✗ 두 파일의 TARGET_SCHEMAS 값이 다르다 — 04 가 03 이 적재하지 않은 스키마를 누락으로 보고한다')
     for p, v in values.items():

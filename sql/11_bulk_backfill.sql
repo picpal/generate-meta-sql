@@ -38,45 +38,35 @@
 --   4. CHANGE_REASON은 보정 배치를 식별할 수 있게 쓴다.
 --      예: 'BACKFILL:SERVICE_CD:20260807' — 나중에 이 배치만 조회·소명할 수 있다.
 --
--- [ID 고정 패턴] — 이 파일의 기본 작업 방식
+-- [대상 고정 패턴] — 이 파일의 기본 작업 방식
 --   보정은 대개 "값이 기본값인 행"을 찾아 바꾼다. 그런데 UPDATE 직후에는
 --   그 조건이 더 이상 성립하지 않으므로, HIST INSERT에 같은 WHERE를 쓰면
 --   0건이 적재된다. 반대로 새 값으로 조회하면 이번 배치와 무관하게
 --   원래 그 값이던 행까지 딸려 들어간다.
 --
---   그래서 다음 3단계를 쓴다.
---     ① 대상 ID 목록을 뽑는다
---     ② 목록을 눈으로 확인하고 DEFINE IDS 에 붙여넣는다
---     ③ UPDATE와 HIST INSERT 모두 WHERE ... IN (&IDS) 로 같은 집합을 가리킨다
+--   그래서 대상 ID를 작업 테이블에 먼저 고정한다.
+--     ① 대상 ID를 TB_META_BACKFILL_TARGET 에 적재한다
+--     ② 작업 테이블을 조회해 눈으로 확인한다 — UPDATE가 칠 집합 그 자체다
+--     ③ UPDATE와 HIST INSERT 모두 EXISTS (… x.ID = …) 로 같은 집합을 가리킨다
 --
 --   조건이 UPDATE 전후로 변하지 않는 경우(예: §11.3의 컬럼명 정규식)에는
 --   같은 WHERE를 그대로 재사용해도 되며, 해당 § 안에 그렇게 표기해 두었다.
 --
---   [배치 크기 한계 — 반드시 지킬 것]
---     · LISTAGG는 4000 byte를 넘으면 잘리는 게 아니라 ORA-01489로 실패한다.
---     · Oracle의 IN 목록은 최대 1,000개다. 넘으면 ORA-01795.
---     · 따라서 한 배치는 200건 이하로 유지한다.
---       (ID가 14자리까지 커질 수 있으므로 200 × 15byte ≈ 3,000byte로 여유를 둔다.
---        1,000건을 채우면 IN 한계에 걸리고, LISTAGG도 4,000byte를 넘길 수 있다.)
---       (1) 단계의 현황 SELECT로 건수를 먼저 확인하고 스키마·서비스 단위로 쪼갠다.
---       배치마다 CHANGE_REASON 접미사를 다르게 두어 나중에 구분한다.
+--   [왜 LISTAGG → DEFINE IDS 방식을 쓰지 않는가]
+--     ID를 문자열로 뽑아 DEFINE 에 붙여넣는 방식은 한계가 많았다.
+--       · LISTAGG는 4000 byte를 넘으면 잘리는 게 아니라 ORA-01489로 실패한다.
+--       · Oracle의 IN 목록 상한은 1,000개다. 넘으면 ORA-01795.
+--       · 그래서 한 배치를 200건 이하로 쪼개야 했다.
+--       · 0건이면 LISTAGG가 NULL이 되어 이전 배치의 IDS 값이 그대로 남는다.
+--         엉뚱한 행을 바꾸는 사고가 여기서 난다.
+--       · 사람이 결과 문자열을 복사해 붙여넣는 단계가 매번 끼어든다.
+--     작업 테이블 방식은 위 네 가지가 전부 사라진다. 건수 제한이 없고,
+--     0건이면 그냥 0건이 바뀌며, 복사·붙여넣기가 없다.
 --
---     · 대상이 수천 건이라 배치 분할이 번거로우면 작업 테이블을 쓴다.
---       IN 목록·LISTAGG 한계를 모두 우회하며 조건은 §11.0의 원칙과 동일하다.
---
---         CREATE TABLE TB_META_BACKFILL_TARGET (ID NUMBER(14) PRIMARY KEY);
---         -- 후보 SELECT 결과를 그대로 적재
---         INSERT INTO TB_META_BACKFILL_TARGET (ID)
---         SELECT TABLE_ID FROM TB_META_TABLE WHERE ...;   -- 먼저 결과를 검토할 것
---         -- UPDATE와 HIST 모두 아래 형태로 같은 집합을 가리킨다
---         --   WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = TABLE_ID)
---         -- 배치 종료 후: TRUNCATE TABLE TB_META_BACKFILL_TARGET;
---
---   [0건 처리]
---     LISTAGG가 0건이면 결과는 NULL이다. 그대로 두면 이전 배치의 IDS 값이
---     남아 엉뚱한 행을 바꾼다. 아래 SELECT는 NVL로 'NULL' 문자열을 반환하며,
---     IN (NULL)은 어떤 행에도 매칭되지 않으므로 안전하다.
---     DEFINE IDS 의 초기값도 NULL 로 둔다.
+--   [배치 식별]
+--     CHANGE_REASON 에 배치 식별자를 넣는다 (DEFINE BATCH).
+--     예: 'BACKFILL:SERVICE_CD:20260807' — 나중에 이 배치만 조회·소명할 수 있다.
+--     한 § 을 조건을 바꿔 여러 번 돌린다면 BATCH 값을 매번 다르게 둔다.
 
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 WHENEVER OSERROR  EXIT FAILURE ROLLBACK
@@ -84,7 +74,17 @@ SET DEFINE ON
 
 DEFINE EMP_ID = 0000000
 DEFINE BATCH  = 20260807
-DEFINE IDS    = NULL
+
+
+-- =====================================================================
+-- §11.0-1 작업 테이블 준비 (최초 1회)
+--   DDL이므로 implicit commit이 발생한다. 보정 작업을 시작하기 전에 만들어 둔다.
+--   이미 있으면 ORA-00955 — 무시하고 다음으로 진행한다.
+-- =====================================================================
+-- CREATE TABLE TB_META_BACKFILL_TARGET (ID NUMBER(14) PRIMARY KEY);
+
+--   모든 보정이 끝난 뒤 정리:
+-- DROP TABLE TB_META_BACKFILL_TARGET PURGE;
 
 
 -- =====================================================================
@@ -101,25 +101,27 @@ SELECT SCHEMA_NAME, COUNT(*) AS CNT
  WHERE SERVICE_CD = 'UNASSIGNED'
  GROUP BY SCHEMA_NAME ORDER BY CNT DESC;
 
--- (2) 대상 목록 확인 — 실제로 이 목록을 바꿀 것인지 눈으로 본다
-SELECT TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME
+-- (2) 대상 고정 — 조건에 맞는 ID를 작업 테이블에 적재한다
+DELETE FROM TB_META_BACKFILL_TARGET;
+INSERT INTO TB_META_BACKFILL_TARGET (ID)
+SELECT TABLE_ID
   FROM TB_META_TABLE
  WHERE SERVICE_CD = 'UNASSIGNED'
-   AND SCHEMA_NAME = 'SVC1'          -- ← 배정 기준을 여기서 좁힌다
- ORDER BY TABLE_NAME;
+   AND SCHEMA_NAME = 'SVC1';         -- ← 배정 기준을 여기서 좁힌다
+COMMIT;
 
--- (2-1) 대상 ID 고정 — 결과 문자열을 위 DEFINE IDS 에 붙여넣는다
-SELECT NVL(LISTAGG(TO_CHAR(TABLE_ID), ',') WITHIN GROUP (ORDER BY TABLE_ID), 'NULL') AS IDS
-  FROM TB_META_TABLE
- WHERE SERVICE_CD = 'UNASSIGNED'
-   AND SCHEMA_NAME = 'SVC1';         -- ← (2)와 동일 조건
+-- (2-1) 고정된 대상을 눈으로 확인한다 — 아래 UPDATE가 칠 집합 그 자체다
+SELECT t.TABLE_ID, t.SCHEMA_NAME, t.TABLE_NAME, t.LOGICAL_NAME
+  FROM TB_META_TABLE t
+  JOIN TB_META_BACKFILL_TARGET x ON x.ID = t.TABLE_ID
+ ORDER BY t.SCHEMA_NAME, t.TABLE_NAME;
 
 -- (3) 일괄 UPDATE
-UPDATE TB_META_TABLE
+UPDATE TB_META_TABLE m
    SET SERVICE_CD = 'MEMBER',        -- ← 배정할 서비스 코드
        UPDATED_BY = '&EMP_ID',
        UPDATED_AT = SYSTIMESTAMP
- WHERE TABLE_ID IN (&IDS);
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = m.TABLE_ID);
 
 -- (4) HIST 적재 (U) — (3)과 같은 ID 집합을 가리킨다
 INSERT INTO TB_META_TABLE_HIST (
@@ -139,13 +141,13 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID',
     PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
     STATUS_CD, REMARK,
     CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-  FROM TB_META_TABLE
- WHERE TABLE_ID IN (&IDS);           -- ← (3)과 동일 집합
+  FROM TB_META_TABLE t
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = t.TABLE_ID);
 
 COMMIT;
 
 -- (5) 검증 — 대상 건수와 HIST 건수가 같아야 한다
-SELECT (SELECT COUNT(*) FROM TB_META_TABLE      WHERE TABLE_ID IN (&IDS))   AS MAIN_CNT,
+SELECT (SELECT COUNT(*) FROM TB_META_BACKFILL_TARGET)                       AS TARGET_CNT,
        (SELECT COUNT(*) FROM TB_META_TABLE_HIST
          WHERE CHANGE_REASON = 'BACKFILL:SERVICE_CD:&BATCH')                AS HIST_CNT
   FROM DUAL;
@@ -165,19 +167,28 @@ SELECT SERVICE_CD, COUNT(*) AS CNT
  WHERE OWNER_EMP_ID = 'SYSTEM'
  GROUP BY SERVICE_CD ORDER BY CNT DESC;
 
--- (2) 대상 ID 고정 — 결과를 DEFINE IDS 에 붙여넣는다
-SELECT NVL(LISTAGG(TO_CHAR(TABLE_ID), ',') WITHIN GROUP (ORDER BY TABLE_ID), 'NULL') AS IDS
+-- (2) 대상 고정 — 조건에 맞는 ID를 작업 테이블에 적재한다
+DELETE FROM TB_META_BACKFILL_TARGET;
+INSERT INTO TB_META_BACKFILL_TARGET (ID)
+SELECT TABLE_ID
   FROM TB_META_TABLE
  WHERE OWNER_EMP_ID = 'SYSTEM'
    AND SERVICE_CD   = 'MEMBER';       -- ← 배정 단위
+COMMIT;
+
+-- (2-1) 고정된 대상 확인
+SELECT t.TABLE_ID, t.SCHEMA_NAME, t.TABLE_NAME, t.SERVICE_CD
+  FROM TB_META_TABLE t
+  JOIN TB_META_BACKFILL_TARGET x ON x.ID = t.TABLE_ID
+ ORDER BY t.SCHEMA_NAME, t.TABLE_NAME;
 
 -- (3) 일괄 UPDATE
-UPDATE TB_META_TABLE
+UPDATE TB_META_TABLE m
    SET OWNER_EMP_ID     = '1234567',   -- ← 주 담당자 사번
 --     SECONDARY_EMP_ID = '7654321',   -- ← 부 담당자 (필요 시)
        UPDATED_BY = '&EMP_ID',
        UPDATED_AT = SYSTIMESTAMP
- WHERE TABLE_ID IN (&IDS);
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = m.TABLE_ID);
 
 -- (4) HIST 적재 (U)
 INSERT INTO TB_META_TABLE_HIST (
@@ -196,10 +207,16 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', 'BACKFILL:OWNER_E
     PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
     STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
     UPDATED_BY, UPDATED_AT
-  FROM TB_META_TABLE
- WHERE TABLE_ID IN (&IDS);
+  FROM TB_META_TABLE t
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = t.TABLE_ID);
 
 COMMIT;
+
+-- (5) 검증
+SELECT (SELECT COUNT(*) FROM TB_META_BACKFILL_TARGET)                          AS TARGET_CNT,
+       (SELECT COUNT(*) FROM TB_META_TABLE_HIST
+         WHERE CHANGE_REASON = 'BACKFILL:OWNER_EMP_ID:&BATCH')                 AS HIST_CNT
+  FROM DUAL;
 
 SELECT COUNT(*) AS STILL_SYSTEM FROM TB_META_TABLE WHERE OWNER_EMP_ID = 'SYSTEM';
 
@@ -249,16 +266,25 @@ SELECT t.SCHEMA_NAME, t.TABLE_NAME, c.COLUMN_NAME, c.PCI_CATEGORY_CD, c.SENSITIV
 --     ⚠️ UPDATE 조건을 (1)의 후보 SELECT보다 넓게 두면 이미 분류가 끝난
 --        컬럼까지 덮어쓴다. COLUMN_ID를 먼저 고정해 범위를 일치시킨다.
 
--- (3-1) 대상 COLUMN_ID 고정 — 결과를 DEFINE IDS 에 붙여넣는다
-SELECT NVL(LISTAGG(TO_CHAR(c.COLUMN_ID), ',') WITHIN GROUP (ORDER BY c.COLUMN_ID), 'NULL') AS IDS
+-- (3-1) 대상 COLUMN_ID 고정 — 작업 테이블에 적재한다
+DELETE FROM TB_META_BACKFILL_TARGET;
+INSERT INTO TB_META_BACKFILL_TARGET (ID)
+SELECT c.COLUMN_ID
   FROM TB_META_COLUMN c
-  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
  WHERE c.PCI_YN = 'N'                 -- ← (1) 후보 조건과 동일
    AND c.STATUS_CD = 'ACTIVE'
    AND REGEXP_LIKE(c.COLUMN_NAME, 'RRN|JUMIN|SSN', 'i');
+COMMIT;
+
+-- (3-1-a) 고정된 대상 확인 — (2)에서 검토한 목록과 일치하는지 본다
+SELECT t.SCHEMA_NAME, t.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+  JOIN TB_META_BACKFILL_TARGET x ON x.ID = c.COLUMN_ID
+ ORDER BY t.SCHEMA_NAME, t.TABLE_NAME, c.COLUMN_NAME;
 
 -- (3-2) 일괄 UPDATE
-UPDATE TB_META_COLUMN
+UPDATE TB_META_COLUMN m
    SET PCI_YN          = 'Y',
        PCI_CATEGORY_CD = 'IDENT',      -- CD_PCI_CATEGORY: IDENT/TRX/SCORE/ABILITY/PUBLIC
        SENSITIVITY_CD  = 'HIGH',       -- CD_SENSITIVITY: HIGH/MID/LOW
@@ -266,7 +292,7 @@ UPDATE TB_META_COLUMN
        MASKING_RULE_CD = 'RRN',        -- CD_MASKING_RULE
        UPDATED_BY = '&EMP_ID',
        UPDATED_AT = SYSTIMESTAMP
- WHERE COLUMN_ID IN (&IDS);
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = m.COLUMN_ID);
 
 -- (4) HIST 적재 (U)
 INSERT INTO TB_META_COLUMN_HIST (
@@ -288,23 +314,27 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID',
     ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
     RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
     CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
-  FROM TB_META_COLUMN
- WHERE COLUMN_ID IN (&IDS);           -- ← (3-2)와 동일 집합
+  FROM TB_META_COLUMN c
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = c.COLUMN_ID);
 
 COMMIT;
 
 -- (5) 테이블 PCI_YN 롤업 — PCI 컬럼을 하나라도 가진 테이블은 PCI_YN='Y'
---     대상 ID 고정 (UPDATE 후에는 PCI_YN='N' 조건이 성립하지 않는다)
-SELECT NVL(LISTAGG(TO_CHAR(t.TABLE_ID), ',') WITHIN GROUP (ORDER BY t.TABLE_ID), 'NULL') AS IDS
+--     대상 ID 재고정 (UPDATE 후에는 PCI_YN='N' 조건이 성립하지 않는다)
+--     ★ 작업 테이블 내용이 COLUMN_ID → TABLE_ID 로 바뀐다. 순서를 지킨다.
+DELETE FROM TB_META_BACKFILL_TARGET;
+INSERT INTO TB_META_BACKFILL_TARGET (ID)
+SELECT t.TABLE_ID
   FROM TB_META_TABLE t
  WHERE t.PCI_YN = 'N'
    AND EXISTS (SELECT 1 FROM TB_META_COLUMN c
                 WHERE c.TABLE_ID = t.TABLE_ID AND c.PCI_YN = 'Y' AND c.STATUS_CD = 'ACTIVE');
+COMMIT;
 
-UPDATE TB_META_TABLE
+UPDATE TB_META_TABLE m
    SET PCI_YN = 'Y',
        UPDATED_BY = '&EMP_ID', UPDATED_AT = SYSTIMESTAMP
- WHERE TABLE_ID IN (&IDS);
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = m.TABLE_ID);
 -- HIST 적재 (U)
 INSERT INTO TB_META_TABLE_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
@@ -322,8 +352,8 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', 'BACKFILL:PCI_ROL
     PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
     STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
     UPDATED_BY, UPDATED_AT
-  FROM TB_META_TABLE
- WHERE TABLE_ID IN (&IDS);
+  FROM TB_META_TABLE t
+ WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = t.TABLE_ID);
 COMMIT;
 
 -- (6) 검증 — 컬럼은 PCI인데 테이블이 아닌 불일치가 0건이어야 한다
