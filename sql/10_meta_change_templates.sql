@@ -1,0 +1,694 @@
+-- =====================================================================
+-- 10_meta_change_templates.sql — 메타 증분 변경 SQL 템플릿
+-- 실행 순서: 초기 적재(01~03) 완료 후, 일상 운영에서 필요할 때마다
+-- 선행: 01_meta_ddl.sql · 02_common_code.sql · 03_initial_load.sql
+-- 출처: DB_메타정보_관리체계_표준설계.md §6.8 (HIST 적재 규약)
+--
+-- ⚠️ 이 파일은 통째로 실행하지 않는다. 필요한 §만 골라 복사해 실행한다.
+-- =====================================================================
+
+
+-- =====================================================================
+-- §10.0 사용 규약 — 실행 전 반드시 읽을 것
+-- =====================================================================
+--
+-- [A] 공통 원칙
+--   1. 본 테이블 DML과 *_HIST INSERT는 항상 같은 트랜잭션. 마지막에만 COMMIT.
+--   2. UPDATE의 SET 절에는 "실제로 바꿀 컬럼만" 남긴다. 나머지 줄은 지운다.
+--      각 템플릿은 선택 가능한 컬럼을 모두 주석(--)으로 열거해 두었다.
+--   3. 삭제는 SOFT(STATUS_CD='DEPRECATED') 우선. HARD는 책임자 승인 후.
+--   4. HARD 삭제는 반드시 HIST 적재 → 본 DELETE 순서. 순서가 바뀌면 증적이 사라진다.
+--   5. 실행 전 "대상 확인 SELECT"로 영향 행수를 먼저 본다. 예상과 다르면 중단.
+--
+-- [B] 치환 변수
+--   아래 DEFINE 값을 채운 뒤 해당 § 블록을 실행한다.
+--   · 값에 작은따옴표(')가 들어가면 두 번 연속('')으로 적는다.
+--   · 값에 앰퍼샌드(&)가 들어가면 SET DEFINE OFF 후 리터럴로 직접 작성한다.
+--   · CHANGE_REASON은 NOT NULL이며 10자 이상 + 대상·사유·근거 포함을 권장한다.
+--     자동화 상수(INITIAL_LOAD / SYSTEM_SYNC)는 수동 경로에서 사용 금지.
+--
+-- [C] 실행 계정
+--   메타 테이블 소유 계정, 또는 메타 테이블 시노님 + DML 권한을 가진 계정.
+--   물리 DDL(ALTER TABLE / CREATE INDEX 등)은 대상 스키마 DDL 권한도 필요하다.
+--
+-- [D] implicit commit 경고
+--   ALTER TABLE / CREATE INDEX / DROP * 은 DDL이라 직전·직후에 implicit commit이
+--   발생한다. DDL이 한 번이라도 실행된 뒤에는 ROLLBACK으로 되돌릴 수 없다.
+--   각 템플릿은 "메타 DML → COMMIT → DDL" 또는 "HIST → DELETE → DDL" 순서를
+--   지키도록 배치했다. 블록 순서를 바꾸지 않는다.
+
+SET DEFINE ON
+SET SQLBLANKLINES ON
+
+DEFINE EMP_ID  = 0000000
+DEFINE REASON  = 변경 사유를 여기에 구체적으로 기재
+DEFINE SCHEMA  = SVC1
+DEFINE TBL     = TB_MEMBER
+DEFINE COL     = MEMBER_NM
+DEFINE IDX     = IDX_MEMBER_01
+DEFINE SEQ     = SEQ_MEMBER_ID
+
+
+-- =====================================================================
+-- §10.1 테이블 속성 변경 (업무·법적 메타 갱신)
+--   용도: SERVICE_CD / OWNER_EMP_ID / PCI_YN / 보관주기 / VIEW_YN / 상태 등
+--   물리 DDL 없음. 논리명을 바꿀 때만 COMMENT ON TABLE을 함께 실행.
+-- =====================================================================
+
+-- (1) 대상 확인 — 1건이어야 한다
+SELECT TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
+       VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+       KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD, PCI_YN,
+       RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD, STATUS_CD
+  FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (2) 메타 UPDATE — 바꿀 줄만 남기고 나머지는 삭제
+UPDATE TB_META_TABLE
+   SET
+--     LOGICAL_NAME        = '회원 기본정보',
+--     DESCRIPTION         = '회원 가입 시 생성되는 기본 정보 테이블',
+--     VIEW_YN             = 'N',                  -- Y=뷰 / N=일반 테이블
+--     SERVICE_CD          = 'MEMBER',             -- CD_SERVICE
+--     OWNER_EMP_ID        = '1234567',
+--     SECONDARY_EMP_ID    = '7654321',
+--     KEY_TABLE_YN        = 'Y',
+--     ISOLATION_YN        = 'Y',
+--     ISOLATION_LEVEL_CD  = 'L2',                 -- CD_ISOLATION_LEVEL: L1/L2/L3
+--     PCI_YN              = 'Y',
+--     RETENTION_PERIOD_CD = 'Y5',                 -- CD_RETENTION_PERIOD: Y1/Y3/Y5/Y10/Y30/PERM
+--     RETENTION_BASIS     = '신용정보법 시행령 제17조의2',
+--     TOS_CD              = 'TOS_MEMBER_01',      -- CD_TOS
+--     STATUS_CD           = 'ACTIVE',             -- CD_STATUS: PLANNED/ACTIVE/DEPRECATED
+--     REMARK              = '비고',
+       UPDATED_BY = '&EMP_ID',
+       UPDATED_AT = SYSTIMESTAMP
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (3) HIST 적재 — 변경 후 스냅샷 (HIST_TYPE='U')
+INSERT INTO TB_META_TABLE_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+COMMIT;
+
+-- (4) 검증 — 본 테이블과 방금 남긴 HIST가 같은 값인지
+SELECT t.SERVICE_CD, h.SERVICE_CD, t.OWNER_EMP_ID, h.OWNER_EMP_ID,
+       t.PCI_YN, h.PCI_YN, t.STATUS_CD, h.STATUS_CD, h.HIST_AT
+  FROM TB_META_TABLE t
+  JOIN TB_META_TABLE_HIST h ON h.TABLE_ID = t.TABLE_ID
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
+   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST WHERE TABLE_ID = t.TABLE_ID);
+
+-- (5) 논리명을 바꾼 경우에만 (DDL — implicit commit 발생)
+-- COMMENT ON TABLE &SCHEMA..&TBL IS '회원 기본정보';
+
+
+-- =====================================================================
+-- §10.2 테이블 SOFT 삭제 (권장)
+--   실제 테이블·자식 메타는 유지하고 STATUS_CD만 DEPRECATED로 표기
+-- =====================================================================
+
+UPDATE TB_META_TABLE
+   SET STATUS_CD = 'DEPRECATED',
+       UPDATED_BY = '&EMP_ID', UPDATED_AT = SYSTIMESTAMP
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- HIST 적재: §10.1 (3)의 INSERT를 그대로 사용 (HIST_TYPE='U')
+
+-- 자식 메타도 함께 폐기 표기하려면 (선택)
+-- UPDATE TB_META_COLUMN
+--    SET STATUS_CD = 'DEPRECATED', UPDATED_BY = '&EMP_ID', UPDATED_AT = SYSTIMESTAMP
+--  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+--                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+-- → 이 경우 §10.6의 COLUMN HIST INSERT(U)도 함께 실행할 것
+
+COMMIT;
+
+
+-- =====================================================================
+-- §10.3 테이블 HARD 삭제 (표준 §6.8)
+--   ⚠️ 책임자 승인 필수. 순서를 바꾸면 ORA-02292 또는 증적 소실.
+--   순서: INDEX_COLUMN → INDEX → COLUMN → TABLE → (물리 DROP)
+-- =====================================================================
+
+-- (0) 사전 점검 — 이 테이블을 참조하는 외부 FK가 있으면 DROP TABLE이 실패한다
+SELECT ac.OWNER, ac.TABLE_NAME, ac.CONSTRAINT_NAME
+  FROM ALL_CONSTRAINTS ac
+  JOIN ALL_CONSTRAINTS pk ON pk.OWNER = ac.R_OWNER AND pk.CONSTRAINT_NAME = ac.R_CONSTRAINT_NAME
+ WHERE ac.CONSTRAINT_TYPE = 'R'
+   AND pk.OWNER = '&SCHEMA' AND pk.TABLE_NAME = '&TBL';
+
+-- (1-1) 인덱스-컬럼 매핑 HIST (D)
+INSERT INTO TB_META_INDEX_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+  FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
+                     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                                        WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
+
+-- (1-2) 인덱스-컬럼 매핑 DELETE
+DELETE FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
+                     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                                        WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
+
+-- (2-1) 인덱스 메타 HIST (D)
+INSERT INTO TB_META_INDEX_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_INDEX
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (2-2) 인덱스 메타 DELETE
+DELETE FROM TB_META_INDEX
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (3-1) 컬럼 메타 HIST (D)
+INSERT INTO TB_META_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (3-2) 컬럼 메타 DELETE
+DELETE FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (4-1) 테이블 메타 HIST (D)
+INSERT INTO TB_META_TABLE_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (4-2) 테이블 메타 DELETE
+DELETE FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+COMMIT;
+
+-- (4-3) 연결 시퀀스 메타 점검 — 자동 정리되지 않는다
+--   결과가 있으면: 시퀀스를 계속 쓰면 그대로 두고, 폐기하면 §10.8 (3)으로 삭제.
+--   방치한 채 동일명 시퀀스를 다시 등록하면 UK_META_SEQUENCE 위반이 난다.
+SELECT SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME, USED_FOR_TABLE, STATUS_CD
+  FROM TB_META_SEQUENCE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND USED_FOR_TABLE = '&TBL';
+
+-- (5) 물리 DROP (DDL — implicit commit. 위 COMMIT 이후에 실행)
+-- DROP TABLE &SCHEMA..&TBL;
+
+
+-- =====================================================================
+-- §10.4 컬럼 추가
+--   순서: 물리 ADD → 메타 INSERT → HIST(I) → COMMIT
+-- =====================================================================
+
+-- (1) 대상 테이블 메타가 있는지 먼저 확인 (없으면 메타 INSERT가 실패한다)
+SELECT TABLE_ID, STATUS_CD FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (2) 물리 컬럼 추가 (DDL — implicit commit)
+-- ALTER TABLE &SCHEMA..&TBL ADD (&COL VARCHAR2(100));
+-- COMMENT ON COLUMN &SCHEMA..&TBL..&COL IS '회원명';
+
+-- (3) 메타 INSERT — 값은 실제 정의에 맞게 수정
+INSERT INTO TB_META_COLUMN (
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+    LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE,
+    PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, UPDATED_BY
+)
+SELECT
+    SEQ_META_COLUMN_ID.NEXTVAL,
+    mt.TABLE_ID,
+    '&COL',
+    (SELECT NVL(MAX(COLUMN_ORDER),0)+1 FROM TB_META_COLUMN WHERE TABLE_ID = mt.TABLE_ID),
+    '회원명',            -- LOGICAL_NAME
+    NULL,                -- DESCRIPTION
+    'VARCHAR2', 100, NULL, NULL,
+    'Y',                 -- NULLABLE_YN
+    NULL,                -- DEFAULT_VALUE (SQL 표현식 원문. 예: '''N''' / 0 / SYSDATE)
+    'N', 'N', 'N',       -- PK_YN, UK_YN, FK_YN
+    'N', NULL, 'LOW',    -- PCI_YN, PCI_CATEGORY_CD(CD_PCI_CATEGORY), SENSITIVITY_CD
+    'N', NULL, 'N', NULL,-- ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD
+    NULL, NULL,          -- RETENTION_PERIOD_CD, TOS_CD (테이블과 다를 때만)
+    'ACTIVE', NULL,      -- STATUS_CD, REMARK
+    '&EMP_ID', '&EMP_ID'
+  FROM TB_META_TABLE mt
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL';
+
+-- (4) HIST 적재 (I) — §10.6 (4)의 COLUMN HIST INSERT에서 'D'를 'I'로 바꿔 사용
+INSERT INTO TB_META_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    c.COLUMN_ID, c.TABLE_ID, c.COLUMN_NAME, c.COLUMN_ORDER, c.LOGICAL_NAME, c.DESCRIPTION,
+    c.DATA_TYPE, c.DATA_LENGTH, c.DATA_PRECISION, c.DATA_SCALE,
+    c.NULLABLE_YN, c.DEFAULT_VALUE, c.PK_YN, c.UK_YN, c.FK_YN,
+    c.PCI_YN, c.PCI_CATEGORY_CD, c.SENSITIVITY_CD,
+    c.ENCRYPTION_YN, c.ENCRYPTION_ALG, c.MASKING_YN, c.MASKING_RULE_CD,
+    c.RETENTION_PERIOD_CD, c.TOS_CD, c.STATUS_CD, c.REMARK,
+    c.CREATED_BY, c.CREATED_AT, c.UPDATED_BY, c.UPDATED_AT
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
+   AND c.COLUMN_NAME = '&COL';
+
+COMMIT;
+
+-- (5) 제약을 함께 추가하는 경우 (DDL — 위 COMMIT 이후에 실행)
+--     메타의 PK_YN/UK_YN/FK_YN도 (3)에서 'Y'로 맞춰 두어야 한다.
+-- ALTER TABLE &SCHEMA..&TBL ADD CONSTRAINT UK_MEMBER_&COL UNIQUE (&COL);
+-- ALTER TABLE &SCHEMA..&TBL ADD CONSTRAINT FK_MEMBER_&COL
+--   FOREIGN KEY (&COL) REFERENCES &SCHEMA..TB_PARENT(PARENT_ID);
+
+
+-- =====================================================================
+-- §10.5 컬럼 속성 변경
+--   물리 정의(타입/길이/DEFAULT/NULL)를 바꿀 때만 ALTER를 함께 실행한다.
+--   PCI 분류 등 메타만 바꿀 때는 (2)의 ALTER를 실행하지 않는다.
+-- =====================================================================
+
+-- (1) 현재값 확인 — 바꾸지 않을 컬럼은 SET 절에서 지우면 그대로 유지된다
+SELECT COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME,
+       DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+       NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+       PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+       ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+       RETENTION_PERIOD_CD, TOS_CD, STATUS_CD
+  FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND COLUMN_NAME = '&COL';
+
+-- (2) 물리 정의를 바꿀 때만 (DDL — implicit commit)
+-- ALTER TABLE &SCHEMA..&TBL MODIFY (&COL VARCHAR2(200));
+
+-- (3) 메타 UPDATE — 바꿀 줄만 남기고 나머지는 삭제
+UPDATE TB_META_COLUMN
+   SET
+--     LOGICAL_NAME        = '회원명',
+--     DESCRIPTION         = '설명',
+--     DATA_TYPE           = 'VARCHAR2',
+--     DATA_LENGTH         = 200,
+--     DATA_PRECISION      = NULL,
+--     DATA_SCALE          = NULL,
+--     NULLABLE_YN         = 'N',
+--     DEFAULT_VALUE       = '''N''',              -- SQL 표현식 원문
+--     PK_YN               = 'Y',
+--     UK_YN               = 'N',
+--     FK_YN               = 'N',
+--     PCI_YN              = 'Y',
+--     PCI_CATEGORY_CD     = 'IDENT',              -- CD_PCI_CATEGORY: IDENT/TRX/SCORE/ABILITY/PUBLIC
+--     SENSITIVITY_CD      = 'HIGH',               -- CD_SENSITIVITY: HIGH/MID/LOW
+--     ENCRYPTION_YN       = 'Y',
+--     ENCRYPTION_ALG      = 'AES256',
+--     MASKING_YN          = 'Y',
+--     MASKING_RULE_CD     = 'NAME',               -- CD_MASKING_RULE
+--     RETENTION_PERIOD_CD = 'Y5',
+--     TOS_CD              = 'TOS_MEMBER_01',
+--     STATUS_CD           = 'ACTIVE',
+--     REMARK              = '비고',
+       UPDATED_BY = '&EMP_ID',
+       UPDATED_AT = SYSTIMESTAMP
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND COLUMN_NAME = '&COL';
+
+-- (4) HIST 적재 — §10.4 (4)의 INSERT에서 'I'를 'U'로 바꿔 실행
+
+COMMIT;
+
+-- (5) 검증 — 본 테이블과 최신 HIST 값 비교
+SELECT c.PCI_YN, h.PCI_YN, c.SENSITIVITY_CD, h.SENSITIVITY_CD,
+       c.DATA_TYPE, h.DATA_TYPE, c.DATA_LENGTH, h.DATA_LENGTH,
+       h.HIST_TYPE, h.CHANGE_REASON, h.HIST_AT
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+  JOIN TB_META_COLUMN_HIST h ON h.COLUMN_ID = c.COLUMN_ID
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
+   AND c.COLUMN_NAME = '&COL'
+   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_COLUMN_HIST WHERE COLUMN_ID = c.COLUMN_ID);
+
+-- (6) 컬럼명 자체를 바꾸는 경우
+--   RENAME은 메타의 UK(TABLE_ID, COLUMN_NAME)를 건드리므로 별도 절차를 쓴다.
+--   ALTER TABLE &SCHEMA..&TBL RENAME COLUMN OLD_NAME TO NEW_NAME;
+--   이후 메타는 §10.6 SOFT 삭제(구 컬럼) + §10.4 추가(신 컬럼)로 처리해
+--   이력을 끊기지 않게 남긴다.
+
+
+-- =====================================================================
+-- §10.6 컬럼 삭제
+-- =====================================================================
+
+-- ── SOFT (권장) ──────────────────────────────────────────────────────
+UPDATE TB_META_COLUMN
+   SET STATUS_CD = 'DEPRECATED',
+       UPDATED_BY = '&EMP_ID', UPDATED_AT = SYSTIMESTAMP
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND COLUMN_NAME = '&COL';
+-- HIST 적재: §10.4 (4)의 INSERT에서 'I'를 'U'로 바꿔 실행
+COMMIT;
+
+-- ── HARD (승인 후) ───────────────────────────────────────────────────
+-- 순서: 인덱스 HIST → 매핑 HIST → 매핑 DELETE → 빈 인덱스 DELETE
+--       → 컬럼 HIST → 컬럼 DELETE → COMMIT → 물리 DROP COLUMN
+
+-- (1) 이 컬럼만으로 구성된 인덱스 확인 (DROP COLUMN 시 Oracle이 자동 DROP한다)
+SELECT mi.INDEX_ID, mi.INDEX_NAME
+  FROM TB_META_INDEX mi
+ WHERE mi.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                       WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic
+                    WHERE ic.INDEX_ID = mi.INDEX_ID AND ic.COLUMN_NAME <> '&COL');
+
+-- (2) 위 인덱스의 HIST(D) → §10.3 (2-1)을 참고해 WHERE만 위 조건으로 바꿔 실행
+-- (3) 매핑 HIST(D) → §10.3 (1-1)을 참고해 COLUMN_NAME = '&COL' 조건 추가해 실행
+
+-- (4) 매핑 DELETE
+DELETE FROM TB_META_INDEX_COLUMN
+ WHERE COLUMN_NAME = '&COL'
+   AND INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
+                     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                                        WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
+
+-- (5) 컬럼 매핑이 모두 빠진 빈 인덱스 DELETE
+DELETE FROM TB_META_INDEX mi
+ WHERE mi.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                       WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic WHERE ic.INDEX_ID = mi.INDEX_ID);
+
+-- (6) 컬럼 HIST(D) → §10.4 (4)의 INSERT에서 'I'를 'D'로 바꿔 실행 (DELETE 전에!)
+
+-- (7) 컬럼 메타 DELETE
+DELETE FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND COLUMN_NAME = '&COL';
+
+COMMIT;
+
+-- (8) 물리 DROP (DDL — 위 COMMIT 이후에 실행)
+-- ALTER TABLE &SCHEMA..&TBL DROP COLUMN &COL;
+
+
+-- =====================================================================
+-- §10.7 인덱스 등록 / 삭제
+-- =====================================================================
+
+-- ── 등록 ─────────────────────────────────────────────────────────────
+-- (1) 물리 인덱스 생성 (DDL — implicit commit)
+-- CREATE INDEX &SCHEMA..&IDX ON &SCHEMA..&TBL (COL_A, COL_B DESC) TABLESPACE TS_IDX;
+
+-- (2) 인덱스 메타 INSERT
+INSERT INTO TB_META_INDEX (
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, UPDATED_BY
+)
+SELECT SEQ_META_INDEX_ID.NEXTVAL, mt.TABLE_ID, '&IDX',
+    'NORMAL',            -- CD_INDEX_TYPE: NORMAL/UNIQUE/BITMAP/FUNCTION/REVERSE
+    'TS_IDX', NULL, NULL,
+    'SEARCH',            -- CD_INDEX_PURPOSE: PK/FK/SEARCH/JOIN/TUNING/SORT
+    '조회 성능 개선을 위해 생성',
+    'CREATE INDEX &SCHEMA..&IDX ON &SCHEMA..&TBL (COL_A, COL_B DESC) TABLESPACE TS_IDX;',
+    'ACTIVE', '&EMP_ID', '&EMP_ID'
+  FROM TB_META_TABLE mt
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL';
+
+-- (3) 인덱스-컬럼 매핑 INSERT (컬럼 수만큼 반복)
+INSERT INTO TB_META_INDEX_COLUMN (INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION)
+SELECT mi.INDEX_ID, 1, 'COL_A', 'ASC', NULL
+  FROM TB_META_INDEX mi
+  JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL' AND mi.INDEX_NAME = '&IDX';
+
+-- (4) 인덱스 HIST(I)
+INSERT INTO TB_META_INDEX_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    mi.INDEX_ID, mi.TABLE_ID, mi.INDEX_NAME, mi.INDEX_TYPE_CD,
+    mi.TABLESPACE_NAME, mi.INI_TRANS, mi.PCT_FREE,
+    mi.PURPOSE_CD, mi.PERFORMANCE_NOTE, mi.CREATE_DDL, mi.STATUS_CD,
+    mi.CREATED_BY, mi.CREATED_AT, mi.UPDATED_BY, mi.UPDATED_AT
+  FROM TB_META_INDEX mi
+  JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL' AND mi.INDEX_NAME = '&IDX';
+
+-- (5) 매핑 HIST(I)
+INSERT INTO TB_META_INDEX_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    ic.INDEX_ID, ic.COLUMN_POS, ic.COLUMN_NAME, ic.SORT_ORDER, ic.FUNC_EXPRESSION
+  FROM TB_META_INDEX_COLUMN ic
+  JOIN TB_META_INDEX mi ON mi.INDEX_ID = ic.INDEX_ID
+  JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL' AND mi.INDEX_NAME = '&IDX';
+
+COMMIT;
+
+-- ── 삭제 ─────────────────────────────────────────────────────────────
+-- (1) 대상 확인 — 정확히 1건이어야 한다 (INDEX_NAME만으로 지우지 말 것)
+SELECT mi.INDEX_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mi.INDEX_NAME, mi.STATUS_CD
+  FROM TB_META_INDEX mi
+  JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+ WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL' AND mi.INDEX_NAME = '&IDX';
+
+-- (2) 매핑 HIST(D) → 위 (5)에서 'I'를 'D'로 바꿔 실행
+-- (3) 인덱스 HIST(D) → 위 (4)에서 'I'를 'D'로 바꿔 실행
+
+-- (4) 매핑 DELETE
+DELETE FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID = (SELECT mi.INDEX_ID FROM TB_META_INDEX mi
+                     JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
+                    WHERE mt.SCHEMA_NAME = '&SCHEMA' AND mt.TABLE_NAME = '&TBL'
+                      AND mi.INDEX_NAME = '&IDX');
+
+-- (5) 인덱스 메타 DELETE
+DELETE FROM TB_META_INDEX
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND INDEX_NAME = '&IDX';
+
+COMMIT;
+
+-- (6) 물리 DROP (DDL — 위 COMMIT 이후에 실행)
+-- DROP INDEX &SCHEMA..&IDX;
+
+
+-- =====================================================================
+-- §10.8 시퀀스 등록 / 변경 / 삭제
+-- =====================================================================
+
+-- ── (1) 등록 ─────────────────────────────────────────────────────────
+-- CREATE SEQUENCE &SCHEMA..&SEQ START WITH 1 INCREMENT BY 1 CACHE 20 NOORDER NOCYCLE;
+
+INSERT INTO TB_META_SEQUENCE (
+    SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
+    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
+    CYCLE_YN, ORDER_YN, PURPOSE_CD,
+    USED_FOR_TABLE, USED_FOR_COLUMN, CREATE_DDL, STATUS_CD,
+    CREATED_BY, UPDATED_BY
+) VALUES (
+    SEQ_META_SEQUENCE_ID.NEXTVAL, '&SCHEMA', '&SEQ',
+    NULL, NULL, 1, 1, 20,
+    'N', 'N',
+    'PK',                -- CD_SEQUENCE_PURPOSE: PK/BIZ_KEY/TEMP/ETC
+    '&TBL', 'MEMBER_ID',
+    'CREATE SEQUENCE &SCHEMA..&SEQ START WITH 1 INCREMENT BY 1 CACHE 20 NOORDER NOCYCLE;',
+    'ACTIVE', '&EMP_ID', '&EMP_ID'
+);
+
+INSERT INTO TB_META_SEQUENCE_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
+    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
+    CYCLE_YN, ORDER_YN, PURPOSE_CD,
+    USED_FOR_TABLE, USED_FOR_COLUMN, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME,
+    MIN_VALUE, MAX_VALUE, INCREMENT_BY, START_WITH, CACHE_SIZE,
+    CYCLE_YN, ORDER_YN, PURPOSE_CD,
+    USED_FOR_TABLE, USED_FOR_COLUMN, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_SEQUENCE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND SEQUENCE_NAME = '&SEQ';
+
+COMMIT;
+
+-- ── (2) 변경 ─────────────────────────────────────────────────────────
+-- 현재값 확인 (메타 + 실제 카탈로그 양쪽)
+SELECT s.INCREMENT_BY, s.CACHE_SIZE, s.CYCLE_YN, s.ORDER_YN, s.PURPOSE_CD,
+       a.INCREMENT_BY AS DB_INCREMENT, a.CACHE_SIZE AS DB_CACHE,
+       a.CYCLE_FLAG, a.ORDER_FLAG, a.LAST_NUMBER
+  FROM TB_META_SEQUENCE s
+  LEFT JOIN ALL_SEQUENCES a
+    ON a.SEQUENCE_OWNER = s.SCHEMA_NAME AND a.SEQUENCE_NAME = s.SEQUENCE_NAME
+ WHERE s.SCHEMA_NAME = '&SCHEMA' AND s.SEQUENCE_NAME = '&SEQ';
+
+-- 물리 변경 — 바꿀 절만 남긴다 (DDL — implicit commit)
+-- ALTER SEQUENCE &SCHEMA..&SEQ INCREMENT BY 10;
+-- ALTER SEQUENCE &SCHEMA..&SEQ CACHE 100;
+
+UPDATE TB_META_SEQUENCE
+   SET
+--     MIN_VALUE       = 1,
+--     MAX_VALUE       = 999999999,
+--     INCREMENT_BY    = 10,
+--     CACHE_SIZE      = 100,
+--     CYCLE_YN        = 'N',
+--     ORDER_YN        = 'N',
+--     PURPOSE_CD      = 'PK',
+--     USED_FOR_TABLE  = '&TBL',
+--     USED_FOR_COLUMN = 'MEMBER_ID',
+--     STATUS_CD       = 'ACTIVE',
+       UPDATED_BY = '&EMP_ID',
+       UPDATED_AT = SYSTIMESTAMP
+ WHERE SCHEMA_NAME = '&SCHEMA' AND SEQUENCE_NAME = '&SEQ';
+
+-- HIST 적재: 위 (1)의 SEQUENCE_HIST INSERT에서 'I'를 'U'로 바꿔 실행
+COMMIT;
+
+-- ── (3) 삭제 ─────────────────────────────────────────────────────────
+-- HIST 적재: 위 (1)의 SEQUENCE_HIST INSERT에서 'I'를 'D'로 바꿔 실행 (DELETE 전에!)
+DELETE FROM TB_META_SEQUENCE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND SEQUENCE_NAME = '&SEQ';
+COMMIT;
+-- DROP SEQUENCE &SCHEMA..&SEQ;
+
+
+-- =====================================================================
+-- §10.9 테이블 재생성 (메타 정리 후 재적재)
+--   상황: 실제 테이블을 DROP하고 같은 이름으로 다시 만들었다.
+--
+--   ⚠️ 전제: TB_META_TABLE에 UNIQUE(SCHEMA_NAME, TABLE_NAME)가 있으므로
+--      SOFT 삭제(DEPRECATED)로 남겨둔 채 같은 이름을 다시 INSERT할 수 없다.
+--      반드시 메타 HARD 정리가 선행되어야 한다. 책임자 승인 필요.
+--
+--   이력은 끊기지 않는다: HARD 정리 시 *_HIST에 'D'가, 재적재 시 'I'가 남는다.
+--   단 TABLE_ID는 새 값이 된다. 예전 TABLE_ID를 참조하던 리포트를 함께 수정할 것.
+-- =====================================================================
+
+-- (1) 백업
+-- CREATE TABLE BAK_META_TABLE_20260807  AS SELECT * FROM TB_META_TABLE  WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL';
+-- CREATE TABLE BAK_META_COLUMN_20260807 AS SELECT * FROM TB_META_COLUMN WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
+-- CREATE TABLE BAK_META_INDEX_20260807  AS SELECT * FROM TB_META_INDEX  WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
+
+-- (2) 옛 메타 정리
+--     §10.3의 (1-1) ~ (4-2) 를 순서대로 실행한 뒤 COMMIT.
+--     ★ (5) 물리 DROP은 실행하지 않는다 — 새로 만든 테이블이 삭제된다.
+--     ★ (4-3) 연결 시퀀스 점검 결과를 반드시 확인한다.
+
+-- (3) 정리 확인 — 0건이어야 한다
+SELECT COUNT(*) AS REMAIN FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (4) 새 메타 적재 — 두 가지 방법 중 선택
+--
+--   [방법 A] 카탈로그에서 자동 재적재 (구조 메타만, 권장)
+--     sql/03_initial_load.sql 재실행. NOT EXISTS 가드로 누락분만 적재된다.
+--     CHANGE_REASON은 'INITIAL_LOAD'로 들어가고 업무 메타는 기본값
+--     (SERVICE_CD='UNASSIGNED', OWNER_EMP_ID='SYSTEM', PCI_YN='N',
+--      SENSITIVITY_CD='LOW')이므로, 이후 §10.1·§10.5로 보정한다.
+--
+--   [방법 B] 수기 적재
+--     §10.4 (3)(4)를 컬럼 수만큼 반복 + §10.1로 테이블 속성 지정.
+--     CHANGE_REASON에 재생성 사유를 남길 수 있어 감사 추적이 명확하다.
+
+-- (5) 인덱스·시퀀스 재등록
+--     §10.7 등록의 (2)~(5), §10.8 (1) — 단, 물리 DDL 블록은 이미 존재하므로 실행하지 않는다.
+--     시퀀스가 (4-3)에서 살아 있었다면 재등록하지 않는다 (UK_META_SEQUENCE 위반).
+
+-- (6) 검증 — 아래가 모두 통과해야 완료
+--     · sql/05_integrity_check.sql §5.8 (대상 키 본↔최신 HIST 일치)
+--     · sql/05_integrity_check.sql §5.3 ~ §5.6 (코드값 무결성) 0건
+--     · sql/04_drift_check.sql §8.1 ~ §8.3 (카탈로그↔메타) 0건
+
+
+-- =====================================================================
+-- 템플릿 끝
+-- =====================================================================
