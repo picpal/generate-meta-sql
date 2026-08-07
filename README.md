@@ -31,6 +31,7 @@ generate-meta-sql/
 ├── css/
 │   └── styles.css                       스타일 (OS 시스템 폰트 fallback)
 ├── js/
+│   ├── version.js                       앱 버전 (VERSION 파일과 동기)
 │   ├── codes.js                         공통 코드 상수 (표준설계서 5장)
 │   ├── utils.js                         공통 유틸
 │   ├── ui.js                            섹션 토글·서브탭·밸리데이션
@@ -53,6 +54,11 @@ generate-meta-sql/
 │   ├── 10_meta_change_templates.sql      [운영] 메타 증분 변경 템플릿 9종
 │   ├── 11_bulk_backfill.sql              [운영] 초기 적재 직후 대량 보정
 │   └── 99_rollback.sql                   [긴급] 전체 롤백
+├── build/                                ★ 반입 패키지 빌드 (개발 PC 전용)
+│   ├── package.sh                        zip 생성 + 검증
+│   └── bump-version.sh                   버전 일괄 상향
+├── VERSION                               패키지 버전 (단일 진실 공급원)
+├── CHANGELOG.md                          버전별 변경 이력
 ├── DB_메타정보_관리체계_표준설계.md      메타 표준 설계서 (명세 · 표 · 설계의도)
 ├── SQL_검증리포트.md                     사내 반입 전 SQL 검증 리포트
 ├── 운영가이드.md                         사내 운영 가이드 (실행 순서 · 트러블슈팅)
@@ -83,6 +89,44 @@ generate-meta-sql/
 - 변경 직후 검증 → [`sql/05_integrity_check.sql`](sql/05_integrity_check.sql) **§5.8**
 
 상세 절차·검증·트러블슈팅: [운영가이드.md](운영가이드.md) · [사용자매뉴얼.md](사용자매뉴얼.md) 참조.
+
+## 버전 확인
+
+반입된 패키지가 어떤 버전인지는 세 곳에서 확인한다.
+
+| 어디서 | 무엇 |
+|---|---|
+| 앱 화면 좌측 상단 | `meta_query_gen / v1.4.0` |
+| 패키지 안 `VERSION` | 버전 번호 |
+| 패키지 안 `BUILD_INFO.txt` | 버전 + **커밋 해시** + 빌드 시각 |
+
+문의할 때는 `BUILD_INFO.txt` 의 version 과 commit 을 함께 알린다.
+버전별 변경 내용은 [CHANGELOG.md](CHANGELOG.md) 참조.
+
+## 반입 패키지 만들기 (개발 PC)
+
+```sh
+./build/bump-version.sh 1.5.0      # VERSION · js/version.js · index.html ?v= 일괄 갱신
+#  ↳ CHANGELOG.md 에 항목 작성 후 커밋
+./build/package.sh                 # dist/generate-meta-sql_v1.5.0.zip
+```
+
+`package.sh` 는 아래를 모두 통과해야 zip을 만든다. 하나라도 어긋나면 중단한다.
+
+- `tests/run.sh` 전체 통과
+- `VERSION` = `js/version.js` = `index.html` 의 모든 `?v=`
+- `CHANGELOG.md` 에 해당 버전 항목 존재
+- 커밋되지 않은 변경 없음 (시험 빌드는 `--dirty`)
+- 생성된 zip의 한글 파일명에 UTF-8 플래그 존재 — Windows 해제 시 깨짐 방지
+
+> `?v=` 를 버전에 묶은 이유: 손으로 관리하던 시절 `column.js` 를 고치고도
+> `?v=1` 을 안 올려, 기존 사용자 브라우저가 **수정 전 JS를 계속 실행**했다.
+
+GitHub 릴리즈 등록:
+
+```sh
+gh release create v1.5.0 --target main --notes-file <노트> dist/generate-meta-sql_v1.5.0.zip
+```
 
 ## 기술 스택
 

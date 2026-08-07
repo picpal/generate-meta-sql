@@ -8,7 +8,8 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="css/styles.css?v=14">
+  <!-- ?v= 는 앱 버전과 동일하게 유지한다. build/bump-version.sh 가 일괄 갱신한다. -->
+  <link rel="stylesheet" href="css/styles.css?v=1.4.0">
 </head>
 <body>
 
@@ -18,7 +19,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-title">DB 메타 쿼리 생성기</div>
-      <div class="brand-sub">meta_query_gen / v1.3.11</div>
+      <div class="brand-sub" id="brand-version">meta_query_gen</div>
       <button class="sidebar-toggle" id="sidebar-toggle" title="메뉴 접기" aria-label="메뉴 접기">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
@@ -315,18 +316,19 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
 </script>
 
 <!-- Core -->
-<script src="js/codes.js?v=5"></script>
-<script src="js/utils.js?v=6"></script>
+<script src="js/version.js?v=1.4.0"></script>
+<script src="js/codes.js?v=1.4.0"></script>
+<script src="js/utils.js?v=1.4.0"></script>
 <!-- UI -->
-<script src="js/ui.js?v=7"></script>
-<script src="js/sqlview.js?v=6"></script>
+<script src="js/ui.js?v=1.4.0"></script>
+<script src="js/sqlview.js?v=1.4.0"></script>
 <!-- Tab modules -->
-<script src="js/table.js?v=17"></script>
-<script src="js/column.js?v=1"></script>
-<script src="js/indexMgr.js?v=1"></script>
-<script src="js/sequence.js?v=1"></script>
+<script src="js/table.js?v=1.4.0"></script>
+<script src="js/column.js?v=1.4.0"></script>
+<script src="js/indexMgr.js?v=1.4.0"></script>
+<script src="js/sequence.js?v=1.4.0"></script>
 <!-- App bootstrap (must load last) -->
-<script src="js/app.js?v=2"></script>
+<script src="js/app.js?v=1.4.0"></script>
 
 </body>
 </html>
