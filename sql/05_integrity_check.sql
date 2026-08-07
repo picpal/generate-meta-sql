@@ -187,6 +187,7 @@ DEFINE SCHEMA = SVC1
 DEFINE TBL    = TB_MEMBER
 DEFINE COL    = MEMBER_NM
 DEFINE REASON = 방금 입력한 CHANGE_REASON 그대로
+DEFINE SINCE  = 20260807000000
 
 -- §5.8.1 테이블 — 본 테이블 값과 최신 HIST 스냅샷이 같은지
 --   기대: 한 행이 나오고, 좌우 값이 모두 같아야 한다.
@@ -223,11 +224,18 @@ SELECT c.COLUMN_NAME,
 
 -- §5.8.3 배치 단위 — 이번 CHANGE_REASON으로 남은 이력 건수
 --   기대: 변경 의도한 행수와 일치. 0이면 HIST INSERT를 빠뜨린 것이다.
-SELECT 'TABLE'        AS SRC, COUNT(*) AS CNT FROM TB_META_TABLE_HIST        WHERE CHANGE_REASON = '&REASON'
-UNION ALL SELECT 'COLUMN',       COUNT(*) FROM TB_META_COLUMN_HIST       WHERE CHANGE_REASON = '&REASON'
-UNION ALL SELECT 'INDEX',        COUNT(*) FROM TB_META_INDEX_HIST        WHERE CHANGE_REASON = '&REASON'
-UNION ALL SELECT 'INDEX_COLUMN', COUNT(*) FROM TB_META_INDEX_COLUMN_HIST WHERE CHANGE_REASON = '&REASON'
-UNION ALL SELECT 'SEQUENCE',     COUNT(*) FROM TB_META_SEQUENCE_HIST     WHERE CHANGE_REASON = '&REASON'
+--   ⚠️ 같은 CHANGE_REASON을 재사용하면 과거 이력까지 세므로 &SINCE로 하한을 둔다.
+--      (사유에 실행 시각·배치 ID를 포함시키면 이 문제 자체가 사라진다)
+SELECT 'TABLE' AS SRC, COUNT(*) AS CNT FROM TB_META_TABLE_HIST
+ WHERE CHANGE_REASON = '&REASON' AND HIST_AT >= TO_TIMESTAMP('&SINCE','YYYYMMDDHH24MISS')
+UNION ALL SELECT 'COLUMN', COUNT(*) FROM TB_META_COLUMN_HIST
+ WHERE CHANGE_REASON = '&REASON' AND HIST_AT >= TO_TIMESTAMP('&SINCE','YYYYMMDDHH24MISS')
+UNION ALL SELECT 'INDEX', COUNT(*) FROM TB_META_INDEX_HIST
+ WHERE CHANGE_REASON = '&REASON' AND HIST_AT >= TO_TIMESTAMP('&SINCE','YYYYMMDDHH24MISS')
+UNION ALL SELECT 'INDEX_COLUMN', COUNT(*) FROM TB_META_INDEX_COLUMN_HIST
+ WHERE CHANGE_REASON = '&REASON' AND HIST_AT >= TO_TIMESTAMP('&SINCE','YYYYMMDDHH24MISS')
+UNION ALL SELECT 'SEQUENCE', COUNT(*) FROM TB_META_SEQUENCE_HIST
+ WHERE CHANGE_REASON = '&REASON' AND HIST_AT >= TO_TIMESTAMP('&SINCE','YYYYMMDDHH24MISS')
 ;
 
 -- §5.8.4 이력 누락 상시 점검 — 본 테이블에 있는데 HIST가 하나도 없는 행
@@ -261,5 +269,146 @@ SELECT 'COLUMN', HIST_ID, HIST_TYPE, HIST_BY, CHANGE_REASON, HIST_AT
   FROM TB_META_COLUMN_HIST
  WHERE HIST_BY = 'UNKNOWN'
     OR (HIST_TYPE <> 'I' AND CHANGE_REASON IN ('INITIAL_LOAD','SYSTEM_SYNC'))
+UNION ALL
+SELECT 'INDEX', HIST_ID, HIST_TYPE, HIST_BY, CHANGE_REASON, HIST_AT
+  FROM TB_META_INDEX_HIST
+ WHERE HIST_BY = 'UNKNOWN'
+    OR (HIST_TYPE <> 'I' AND CHANGE_REASON IN ('INITIAL_LOAD','SYSTEM_SYNC'))
+UNION ALL
+SELECT 'INDEX_COLUMN', HIST_ID, HIST_TYPE, HIST_BY, CHANGE_REASON, HIST_AT
+  FROM TB_META_INDEX_COLUMN_HIST
+ WHERE HIST_BY = 'UNKNOWN'
+    OR (HIST_TYPE <> 'I' AND CHANGE_REASON IN ('INITIAL_LOAD','SYSTEM_SYNC'))
+UNION ALL
+SELECT 'SEQUENCE', HIST_ID, HIST_TYPE, HIST_BY, CHANGE_REASON, HIST_AT
+  FROM TB_META_SEQUENCE_HIST
+ WHERE HIST_BY = 'UNKNOWN'
+    OR (HIST_TYPE <> 'I' AND CHANGE_REASON IN ('INITIAL_LOAD','SYSTEM_SYNC'))
  ORDER BY 6 DESC
 ;
+
+
+-- =====================================================================
+-- §5.8.6 전체 스냅샷 일치 검증 (§5.8.1/5.8.2의 정밀 버전)
+--   §5.8.1·§5.8.2는 자주 보는 컬럼만 나열하므로 LOGICAL_NAME·DESCRIPTION·
+--   암호화·보관주기 등이 어긋나도 통과한 것처럼 보인다.
+--   아래는 전 컬럼을 MINUS 양방향으로 비교한다. 결과 0건이면 완전 일치.
+-- =====================================================================
+
+-- §5.8.6-A TB_META_TABLE 전체 스냅샷 일치 (부분 컬럼이 아닌 전 컬럼 비교)
+--   기대: 0건. 행이 나오면 그 컬럼이 본↔HIST 간 다르다는 뜻이다.
+SELECT 'MAIN_ONLY' AS SIDE, x.* FROM (
+    SELECT TABLE_ID,
+           SCHEMA_NAME,
+           TABLE_NAME,
+           LOGICAL_NAME,
+           DESCRIPTION,
+           VIEW_YN,
+           SERVICE_CD,
+           OWNER_EMP_ID,
+           SECONDARY_EMP_ID,
+           KEY_TABLE_YN,
+           ISOLATION_YN,
+           ISOLATION_LEVEL_CD,
+           PCI_YN,
+           RETENTION_PERIOD_CD,
+           RETENTION_BASIS,
+           TOS_CD,
+           STATUS_CD,
+           REMARK,
+           CREATED_BY,
+           CREATED_AT,
+           UPDATED_BY,
+           UPDATED_AT
+      FROM TB_META_TABLE
+     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'
+    MINUS
+    SELECT TABLE_ID,
+           SCHEMA_NAME,
+           TABLE_NAME,
+           LOGICAL_NAME,
+           DESCRIPTION,
+           VIEW_YN,
+           SERVICE_CD,
+           OWNER_EMP_ID,
+           SECONDARY_EMP_ID,
+           KEY_TABLE_YN,
+           ISOLATION_YN,
+           ISOLATION_LEVEL_CD,
+           PCI_YN,
+           RETENTION_PERIOD_CD,
+           RETENTION_BASIS,
+           TOS_CD,
+           STATUS_CD,
+           REMARK,
+           CREATED_BY,
+           CREATED_AT,
+           UPDATED_BY,
+           UPDATED_AT
+      FROM TB_META_TABLE_HIST h
+     WHERE h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
+) x
+UNION ALL
+SELECT 'HIST_ONLY', y.* FROM (
+    SELECT TABLE_ID,
+           SCHEMA_NAME,
+           TABLE_NAME,
+           LOGICAL_NAME,
+           DESCRIPTION,
+           VIEW_YN,
+           SERVICE_CD,
+           OWNER_EMP_ID,
+           SECONDARY_EMP_ID,
+           KEY_TABLE_YN,
+           ISOLATION_YN,
+           ISOLATION_LEVEL_CD,
+           PCI_YN,
+           RETENTION_PERIOD_CD,
+           RETENTION_BASIS,
+           TOS_CD,
+           STATUS_CD,
+           REMARK,
+           CREATED_BY,
+           CREATED_AT,
+           UPDATED_BY,
+           UPDATED_AT
+      FROM TB_META_TABLE_HIST h
+     WHERE h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
+    MINUS
+    SELECT TABLE_ID,
+           SCHEMA_NAME,
+           TABLE_NAME,
+           LOGICAL_NAME,
+           DESCRIPTION,
+           VIEW_YN,
+           SERVICE_CD,
+           OWNER_EMP_ID,
+           SECONDARY_EMP_ID,
+           KEY_TABLE_YN,
+           ISOLATION_YN,
+           ISOLATION_LEVEL_CD,
+           PCI_YN,
+           RETENTION_PERIOD_CD,
+           RETENTION_BASIS,
+           TOS_CD,
+           STATUS_CD,
+           REMARK,
+           CREATED_BY,
+           CREATED_AT,
+           UPDATED_BY,
+           UPDATED_AT
+      FROM TB_META_TABLE
+     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'
+) y
+;
+
+-- §5.8.7 HARD 삭제 검증 — 본 행이 없으므로 §5.8.6은 0건 비교가 무의미하다.
+--   삭제 직후에는 최신 HIST가 'D'이고 본 테이블에 행이 없어야 정상이다.
+SELECT (SELECT COUNT(*) FROM TB_META_TABLE
+         WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')          AS MAIN_REMAIN,
+       (SELECT MAX(HIST_TYPE) KEEP (DENSE_RANK LAST ORDER BY HIST_ID)
+          FROM TB_META_TABLE_HIST h
+          JOIN (SELECT '&SCHEMA' AS S, '&TBL' AS T FROM DUAL) k
+            ON h.SCHEMA_NAME = k.S AND h.TABLE_NAME = k.T)               AS LAST_HIST_TYPE
+  FROM DUAL;
+--   기대: MAIN_REMAIN = 0, LAST_HIST_TYPE = 'D'
