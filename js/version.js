@@ -9,7 +9,7 @@
  * 파일 하나로 분리해 둔다.
  * ========================================================= */
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 
 document.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('brand-version');

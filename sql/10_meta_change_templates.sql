@@ -942,100 +942,351 @@ COMMIT;
 
 
 -- =====================================================================
--- §10.9 테이블 재생성 (메타 정리 후 재적재)
+-- §10.9 테이블 재생성 — 클린 → 03 재실행 → 업무 메타 복원
 --   상황: 실제 테이블을 DROP하고 같은 이름으로 다시 만들었다.
 --
---   ⚠️ 전제: TB_META_TABLE에 UNIQUE(SCHEMA_NAME, TABLE_NAME)가 있으므로
---      SOFT 삭제(DEPRECATED)로 남겨둔 채 같은 이름을 다시 INSERT할 수 없다.
---      반드시 메타 HARD 정리가 선행되어야 한다. 책임자 승인 필요.
+--   흐름:  (1) 스냅샷 → (2) 클린 → (3) 03 재실행 → (4) 복원 → (5) 검증
 --
---   이력은 끊기지 않는다: HARD 정리 시 *_HIST에 'D'가, 재적재 시 'I'가 남는다.
---   단 TABLE_ID는 새 값이 된다. 예전 TABLE_ID를 참조하던 리포트를 함께 수정할 것.
+-- ★ 왜 §10.3을 골라 쓰지 않는가
+--   §10.3은 물리 DROP 블록을 포함한다. 재생성 상황에서 그 블록을 지우는 것을
+--   깜빡하면 방금 만든 테이블이 사라진다. 그래서 이 §은 물리 DDL을 아예
+--   포함하지 않는다. 통째로 실행해도 실물은 건드리지 않는다.
+--
+-- ★ 왜 03 재실행만으로 충분한가
+--   03은 TABLE·COLUMN·INDEX·INDEX_COLUMN·SEQUENCE를 모두 카탈로그에서 적재하고,
+--   모든 INSERT가 행 단위 NOT EXISTS 가드다. 따라서 지운 테이블만 정확히 다시
+--   채워지고 나머지는 건드리지 않는다. 인덱스를 §10.7로 따로 재등록할 필요가 없다.
+--
+-- ⚠️ 재적재된 행의 업무 메타는 기본값이다
+--   SERVICE_CD='UNASSIGNED', OWNER_EMP_ID='SYSTEM', PCI_YN='N',
+--   SENSITIVITY_CD='LOW', RETENTION_PERIOD_CD='Y5'.
+--   PCI_YN이 'N'으로 돌아간 상태에서 sql/07_view_gen_nonpci.sql로 비-PCI VIEW를
+--   재생성하면 이전에 가려지던 개인신용정보 컬럼이 그대로 노출된다.
+--   (4) 복원을 건너뛰지 않는다. 복원 전에는 VIEW를 재생성하지 않는다.
+--
+-- ⚠️ 전제와 부작용
+--   · TB_META_TABLE에 UNIQUE(SCHEMA_NAME, TABLE_NAME)가 있어 SOFT 삭제로 남겨둔 채
+--     같은 이름을 다시 INSERT할 수 없다. 메타 HARD 정리가 전제다. 책임자 승인 필요.
+--   · 이력은 끊기지 않는다 — 클린 시 'D', 재적재 시 'I', 복원 시 'U'가 남는다.
+--   · TABLE_ID·COLUMN_ID·INDEX_ID는 모두 새 값이 된다.
+--     예전 ID를 참조하던 리포트를 함께 수정할 것.
+--   · 시퀀스 메타는 이 절차가 건드리지 않는다. USED_FOR_TABLE 링크는 카탈로그에
+--     없는 정보라 지우면 03이 복원해 주지 못한다 (PURPOSE_CD='ETC', 링크는 NULL).
 -- =====================================================================
 
 -- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
 WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
 WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
--- (1) 백업
--- CREATE TABLE BAK_META_TABLE_20260807  AS SELECT * FROM TB_META_TABLE  WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL';
--- CREATE TABLE BAK_META_COLUMN_20260807 AS SELECT * FROM TB_META_COLUMN WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
--- CREATE TABLE BAK_META_INDEX_20260807  AS SELECT * FROM TB_META_INDEX  WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
 
--- (2) 옛 메타 정리
---     §10.3의 (2-1) ~ (5-2) 를 순서대로 실행한 뒤 COMMIT.
---     ★ (1) 물리 DROP은 실행하지 않는다 — 새로 만든 테이블이 삭제된다.
---     ★ (0-1)(0-2) 게이트 결과를 반드시 확인한다.
+-- ─────────────────────────────────────────────────────────────────────
+-- (1) 업무 메타 스냅샷 — 클린 전에 반드시 먼저
+-- ─────────────────────────────────────────────────────────────────────
+--   CREATE TABLE은 DDL이라 implicit commit이 발생한다. 클린 트랜잭션이
+--   시작되기 전인 여기서 끝내 두는 이유다.
 
--- (3) 정리 확인 — 0건이어야 한다
-SELECT COUNT(*) AS REMAIN FROM TB_META_TABLE
+-- (1-1) 이전 실행의 잔재 정리 (없으면 ORA-00942 — 무시하고 진행)
+WHENEVER SQLERROR CONTINUE
+DROP TABLE TB_META_RECREATE_BAK_TABLE  PURGE;
+DROP TABLE TB_META_RECREATE_BAK_COLUMN PURGE;
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+
+-- (1-2) 스냅샷 생성
+CREATE TABLE TB_META_RECREATE_BAK_TABLE AS
+SELECT * FROM TB_META_TABLE
  WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
 
--- (4) 새 메타 적재 — 두 가지 방법 중 선택
---
---   [방법 A] 카탈로그에서 자동 재적재 (구조 메타만, 권장)
---     sql/03_initial_load.sql 재실행. NOT EXISTS 가드로 누락분만 적재된다.
---     CHANGE_REASON은 'INITIAL_LOAD'로 들어가고 업무 메타는 기본값
---     (SERVICE_CD='UNASSIGNED', OWNER_EMP_ID='SYSTEM', PCI_YN='N',
---      SENSITIVITY_CD='LOW')이므로, 이후 §10.1·§10.5로 보정한다.
---
---   [방법 B] 수기 적재
---     ⚠️ HARD 정리 후에는 TB_META_TABLE 행이 없다. §10.4의 컬럼 INSERT는
---        TB_META_TABLE에서 SELECT하고 §10.1은 UPDATE이므로 둘 다 0건이 된다.
---        아래 (4-B-1)(4-B-2)로 테이블 메타를 먼저 만든 뒤 컬럼을 적재한다.
+--   컬럼 스냅샷에는 재조인용 키(SCHEMA_NAME, TABLE_NAME)를 함께 담는다.
+--   TB_META_COLUMN은 TABLE_ID만 갖고 있는데 그 ID는 재적재 후 바뀌기 때문이다.
+CREATE TABLE TB_META_RECREATE_BAK_COLUMN AS
+SELECT t.SCHEMA_NAME, t.TABLE_NAME, c.*
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL';
 
--- (4-B-1) 테이블 메타 INSERT — 값은 실제에 맞게 수정
-INSERT INTO TB_META_TABLE (
+-- (1-3) 스냅샷 확인 — TBL_BAK=1, COL_BAK=현재 컬럼 수. 0이면 대상이 틀린 것이다.
+SELECT (SELECT COUNT(*) FROM TB_META_RECREATE_BAK_TABLE)  AS TBL_BAK,
+       (SELECT COUNT(*) FROM TB_META_RECREATE_BAK_COLUMN) AS COL_BAK
+  FROM DUAL;
+
+
+-- ─────────────────────────────────────────────────────────────────────
+-- (2) 클린 — 옛 메타 삭제 (물리는 건드리지 않는다)
+-- ─────────────────────────────────────────────────────────────────────
+--   순서: INDEX_COLUMN → INDEX → COLUMN → TABLE. 각 단계는 HIST(D) 후 DELETE.
+--   HIST를 먼저 적재해야 증적이 남는다 (표준 §6.8).
+
+-- (2-1) 인덱스-컬럼 매핑 HIST (D)
+INSERT INTO TB_META_INDEX_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
+  FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
+                     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                                        WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
+
+-- (2-2) 인덱스-컬럼 매핑 DELETE
+DELETE FROM TB_META_INDEX_COLUMN
+ WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
+                     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                                        WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
+
+-- (2-3) 인덱스 메타 HIST (D)
+INSERT INTO TB_META_INDEX_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
+    TABLESPACE_NAME, INI_TRANS, PCT_FREE,
+    PURPOSE_CD, PERFORMANCE_NOTE, CREATE_DDL, STATUS_CD,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_INDEX
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (2-4) 인덱스 메타 DELETE
+DELETE FROM TB_META_INDEX
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (2-5) 컬럼 메타 HIST (D)
+INSERT INTO TB_META_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (2-6) 컬럼 메타 DELETE
+DELETE FROM TB_META_COLUMN
+ WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                    WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+
+-- (2-7) 테이블 메타 HIST (D)
+INSERT INTO TB_META_TABLE_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
     VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
     KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
     PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
-    STATUS_CD, REMARK, CREATED_BY, UPDATED_BY
-) VALUES (
-    SEQ_META_TABLE_ID.NEXTVAL, '&SCHEMA', '&TBL', '회원 기본정보', NULL,
-    'N',                 -- VIEW_YN
-    'UNASSIGNED',        -- SERVICE_CD (CD_SERVICE — 확정됐으면 실제 코드로)
-    'SYSTEM', NULL,      -- OWNER_EMP_ID, SECONDARY_EMP_ID
-    'N', 'N', NULL,      -- KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD
-    'N',                 -- PCI_YN
-    'Y5', NULL, NULL,    -- RETENTION_PERIOD_CD(CD_RETENTION_PERIOD), RETENTION_BASIS, TOS_CD
-    'ACTIVE', NULL, '&EMP_ID', '&EMP_ID'
-);
-
--- (4-B-2) 테이블 HIST (I)
-INSERT INTO TB_META_TABLE_HIST (
-    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
-    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
-    DESCRIPTION, VIEW_YN, SERVICE_CD, OWNER_EMP_ID,
-    SECONDARY_EMP_ID, KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
-    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
-    STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
-    UPDATED_BY, UPDATED_AT
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
 )
-SELECT SEQ_META_HIST_ID.NEXTVAL, 'I', SYSTIMESTAMP, '&EMP_ID', '&REASON',
-    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
-    DESCRIPTION, VIEW_YN, SERVICE_CD, OWNER_EMP_ID,
-    SECONDARY_EMP_ID, KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
     PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
-    STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
-    UPDATED_BY, UPDATED_AT
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
   FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (2-8) 테이블 메타 DELETE
+DELETE FROM TB_META_TABLE
  WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
 
 COMMIT;
 
--- (4-B-3) 컬럼 적재 — §10.4 (3)(4)를 컬럼 수만큼 반복
--- (4-B-4) 테이블 속성 확정 — §10.1
---     CHANGE_REASON에 재생성 사유를 남길 수 있어 감사 추적이 명확하다.
+-- (2-9) 클린 확인 — 셋 다 0이어야 한다
+SELECT (SELECT COUNT(*) FROM TB_META_TABLE
+         WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL') AS TBL_REMAIN,
+       (SELECT COUNT(*) FROM TB_META_COLUMN c
+         WHERE NOT EXISTS (SELECT 1 FROM TB_META_TABLE t WHERE t.TABLE_ID = c.TABLE_ID)) AS COL_ORPHAN,
+       (SELECT COUNT(*) FROM TB_META_INDEX i
+         WHERE NOT EXISTS (SELECT 1 FROM TB_META_TABLE t WHERE t.TABLE_ID = i.TABLE_ID)) AS IDX_ORPHAN
+  FROM DUAL;
 
--- (5) 인덱스·시퀀스 재등록
---     §10.7 등록의 (2)~(5), §10.8 (1) — 단, 물리 DDL 블록은 이미 존재하므로 실행하지 않는다.
---     시퀀스가 (0-2)에서 살아 있었다면 재등록하지 않는다 (UK_META_SEQUENCE 위반).
 
--- (6) 검증 — 아래가 모두 통과해야 완료
---     · sql/05_integrity_check.sql §5.8 (대상 키 본↔최신 HIST 일치)
---     · sql/05_integrity_check.sql §5.3 ~ §5.6 (코드값 무결성) 0건
---     · sql/04_drift_check.sql §8.1 ~ §8.3 (카탈로그↔메타) 0건
+-- ─────────────────────────────────────────────────────────────────────
+-- (3) 재적재 — sql/03_initial_load.sql 을 그대로 재실행
+-- ─────────────────────────────────────────────────────────────────────
+--   @sql/03_initial_load.sql
+--
+--   · 대상 스키마('SVC1','SVC2' 치환분)가 &SCHEMA 를 포함하는지 먼저 확인한다.
+--   · NOT EXISTS 가드가 행 단위라 이미 있는 다른 테이블은 건드리지 않는다.
+--   · CHANGE_REASON은 'INITIAL_LOAD'로 들어간다. 재생성 사유는 (4) 복원의
+--     HIST(U)에 &REASON 으로 남으므로 추적이 끊기지 않는다.
+
+-- (3-1) 재적재 확인 — TBL_CNT=1, COL_CNT=CATALOG_COL_CNT 여야 한다
+SELECT (SELECT COUNT(*) FROM TB_META_TABLE
+         WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL') AS TBL_CNT,
+       (SELECT COUNT(*) FROM TB_META_COLUMN
+         WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                            WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')) AS COL_CNT,
+       (SELECT COUNT(*) FROM ALL_TAB_COLUMNS
+         WHERE OWNER = '&SCHEMA' AND TABLE_NAME = '&TBL') AS CATALOG_COL_CNT
+  FROM DUAL;
+
+
+-- ─────────────────────────────────────────────────────────────────────
+-- (4) 업무 메타 복원
+-- ─────────────────────────────────────────────────────────────────────
+--   복원 대상은 "카탈로그에서 알아낼 수 없는 값"만이다.
+--   타입·길이·NULL 허용·PK/UK/FK·암호화 여부는 복원하지 않는다 —
+--   그것들은 새로 만든 테이블의 실제 정의가 정답이고, 옛 값을 덮어쓰면
+--   sql/04_drift_check.sql §8.3이 잡아내는 불일치를 스스로 만드는 셈이 된다.
+--   STATUS_CD·VIEW_YN도 복원하지 않는다 (재생성된 실물 기준이 맞다).
+
+-- (4-1) 컬럼 대조 — 복원 전에 눈으로 확인한다
+--   MATCHED  : 이름이 같아 복원될 컬럼
+--   NEW      : 재생성으로 새로 생긴 컬럼 → 복원 대상 없음. PCI 분류를 새로 해야 한다
+--   REMOVED  : 옛 메타에만 있던 컬럼 → 재생성 시 빠진 것. 의도한 것인지 확인
+SELECT 'MATCHED' AS KIND, c.COLUMN_NAME, b.PCI_YN AS OLD_PCI, b.SENSITIVITY_CD AS OLD_SENS
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+  JOIN TB_META_RECREATE_BAK_COLUMN b
+       ON b.SCHEMA_NAME = t.SCHEMA_NAME AND b.TABLE_NAME = t.TABLE_NAME
+      AND b.COLUMN_NAME = c.COLUMN_NAME
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
+UNION ALL
+--   UNION ALL 분기 간 타입을 맞춘다. 타입 없는 NULL 리터럴은 ORA-01790이 날 수 있다.
+SELECT 'NEW', c.COLUMN_NAME, CAST(NULL AS VARCHAR2(1)), CAST(NULL AS VARCHAR2(30))
+  FROM TB_META_COLUMN c
+  JOIN TB_META_TABLE  t ON t.TABLE_ID = c.TABLE_ID
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
+   AND NOT EXISTS (SELECT 1 FROM TB_META_RECREATE_BAK_COLUMN b
+                    WHERE b.SCHEMA_NAME = t.SCHEMA_NAME AND b.TABLE_NAME = t.TABLE_NAME
+                      AND b.COLUMN_NAME = c.COLUMN_NAME)
+UNION ALL
+SELECT 'REMOVED', b.COLUMN_NAME, b.PCI_YN, b.SENSITIVITY_CD
+  FROM TB_META_RECREATE_BAK_COLUMN b
+ WHERE b.SCHEMA_NAME = '&SCHEMA' AND b.TABLE_NAME = '&TBL'
+   AND NOT EXISTS (SELECT 1 FROM TB_META_COLUMN c
+                     JOIN TB_META_TABLE t ON t.TABLE_ID = c.TABLE_ID
+                    WHERE t.SCHEMA_NAME = b.SCHEMA_NAME AND t.TABLE_NAME = b.TABLE_NAME
+                      AND c.COLUMN_NAME = b.COLUMN_NAME)
+ ORDER BY 1, 2;
+
+-- (4-2) 테이블 업무 메타 복원
+UPDATE TB_META_TABLE m
+   SET (LOGICAL_NAME, DESCRIPTION, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+        KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+        PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD, REMARK,
+        UPDATED_BY, UPDATED_AT) =
+       (SELECT b.LOGICAL_NAME, b.DESCRIPTION, b.SERVICE_CD, b.OWNER_EMP_ID, b.SECONDARY_EMP_ID,
+               b.KEY_TABLE_YN, b.ISOLATION_YN, b.ISOLATION_LEVEL_CD,
+               b.PCI_YN, b.RETENTION_PERIOD_CD, b.RETENTION_BASIS, b.TOS_CD, b.REMARK,
+               '&EMP_ID', SYSTIMESTAMP
+          FROM TB_META_RECREATE_BAK_TABLE b
+         WHERE b.SCHEMA_NAME = m.SCHEMA_NAME AND b.TABLE_NAME = m.TABLE_NAME)
+ WHERE m.SCHEMA_NAME = '&SCHEMA' AND m.TABLE_NAME = '&TBL'
+   AND EXISTS (SELECT 1 FROM TB_META_RECREATE_BAK_TABLE b
+                WHERE b.SCHEMA_NAME = m.SCHEMA_NAME AND b.TABLE_NAME = m.TABLE_NAME);
+
+-- (4-3) 테이블 HIST (U — 변경 후 스냅샷)
+INSERT INTO TB_META_TABLE_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
+    VIEW_YN, SERVICE_CD, OWNER_EMP_ID, SECONDARY_EMP_ID,
+    KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+    PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+    STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_TABLE
+ WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
+
+-- (4-4) 컬럼 업무 메타 복원 — 이름이 일치하는 컬럼만
+UPDATE TB_META_COLUMN m
+   SET (LOGICAL_NAME, DESCRIPTION, PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+        MASKING_YN, MASKING_RULE_CD, RETENTION_PERIOD_CD, TOS_CD, REMARK,
+        UPDATED_BY, UPDATED_AT) =
+       (SELECT b.LOGICAL_NAME, b.DESCRIPTION, b.PCI_YN, b.PCI_CATEGORY_CD, b.SENSITIVITY_CD,
+               b.MASKING_YN, b.MASKING_RULE_CD, b.RETENTION_PERIOD_CD, b.TOS_CD, b.REMARK,
+               '&EMP_ID', SYSTIMESTAMP
+          FROM TB_META_RECREATE_BAK_COLUMN b
+         WHERE b.SCHEMA_NAME = '&SCHEMA' AND b.TABLE_NAME = '&TBL'
+           AND b.COLUMN_NAME = m.COLUMN_NAME)
+ WHERE m.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                      WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND EXISTS (SELECT 1 FROM TB_META_RECREATE_BAK_COLUMN b
+                WHERE b.SCHEMA_NAME = '&SCHEMA' AND b.TABLE_NAME = '&TBL'
+                  AND b.COLUMN_NAME = m.COLUMN_NAME);
+
+-- (4-5) 컬럼 HIST (U) — 복원된 컬럼만
+INSERT INTO TB_META_COLUMN_HIST (
+    HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+)
+SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+    COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
+    DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE,
+    NULLABLE_YN, DEFAULT_VALUE, PK_YN, UK_YN, FK_YN,
+    PCI_YN, PCI_CATEGORY_CD, SENSITIVITY_CD,
+    ENCRYPTION_YN, ENCRYPTION_ALG, MASKING_YN, MASKING_RULE_CD,
+    RETENTION_PERIOD_CD, TOS_CD, STATUS_CD, REMARK,
+    CREATED_BY, CREATED_AT, UPDATED_BY, UPDATED_AT
+  FROM TB_META_COLUMN m
+ WHERE m.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                      WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+   AND EXISTS (SELECT 1 FROM TB_META_RECREATE_BAK_COLUMN b
+                WHERE b.SCHEMA_NAME = '&SCHEMA' AND b.TABLE_NAME = '&TBL'
+                  AND b.COLUMN_NAME = m.COLUMN_NAME);
+
+COMMIT;
+
+
+-- ─────────────────────────────────────────────────────────────────────
+-- (5) 검증
+-- ─────────────────────────────────────────────────────────────────────
+
+-- (5-1) 복원 누락 확인 — 기본값이 남아 있으면 복원이 안 된 것이다.
+--   단, 클린 전에도 기본값이었다면(초기 적재 후 §11 보정을 안 한 테이블) 정상이다.
+SELECT t.SERVICE_CD, t.OWNER_EMP_ID, t.PCI_YN,
+       (SELECT COUNT(*) FROM TB_META_COLUMN c
+         WHERE c.TABLE_ID = t.TABLE_ID AND c.PCI_YN = 'Y')      AS PCI_COL_NOW,
+       (SELECT COUNT(*) FROM TB_META_RECREATE_BAK_COLUMN b
+         WHERE b.SCHEMA_NAME = t.SCHEMA_NAME AND b.TABLE_NAME = t.TABLE_NAME
+           AND b.PCI_YN = 'Y')                                   AS PCI_COL_BEFORE
+  FROM TB_META_TABLE t
+ WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL';
+--   PCI_COL_NOW < PCI_COL_BEFORE 이면 (4-1)의 REMOVED 목록과 대조한다.
+--   설명되지 않는 차이가 있으면 비-PCI VIEW를 재생성하지 말고 원인을 먼저 찾는다.
+
+-- (5-2) 아래가 모두 통과해야 완료
+--     · sql/05_integrity_check.sql §5.8   (본↔최신 HIST 일치)
+--     · sql/05_integrity_check.sql §5.3~§5.6 (코드값 무결성) 0건
+--     · sql/04_drift_check.sql §8.1~§8.3     (카탈로그↔메타) 0건
+
+-- (5-3) 검증을 모두 통과한 뒤 스냅샷 정리
+-- DROP TABLE TB_META_RECREATE_BAK_TABLE  PURGE;
+-- DROP TABLE TB_META_RECREATE_BAK_COLUMN PURGE;
 
 
 -- =====================================================================
