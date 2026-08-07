@@ -108,10 +108,13 @@ const SequenceTab = (() => {
    */
   function buildAlterDdl(schema, seq, d) {
     const parts = [];
+    // 값을 비운 채 건드린 경우 물리 DDL과 메타가 갈라지지 않도록
+    // MIN/MAX는 NOMINVALUE/NOMAXVALUE, CACHE는 NOCACHE로 명시한다.
+    // INCREMENT BY는 비울 수 없다(genAlter에서 검증).
     if (isTouched('seq-a','incrementBy') && d.incrementBy) parts.push(`  INCREMENT BY ${d.incrementBy}`);
-    if (isTouched('seq-a','minValue')    && d.minValue)    parts.push(`  MINVALUE ${d.minValue}`);
-    if (isTouched('seq-a','maxValue')    && d.maxValue)    parts.push(`  MAXVALUE ${d.maxValue}`);
-    if (isTouched('seq-a','cacheSize'))  parts.push(d.cacheSize ? `  CACHE ${d.cacheSize}` : '  NOCACHE');
+    if (isTouched('seq-a','minValue'))   parts.push(d.minValue  ? `  MINVALUE ${d.minValue}`  : '  NOMINVALUE');
+    if (isTouched('seq-a','maxValue'))   parts.push(d.maxValue  ? `  MAXVALUE ${d.maxValue}`  : '  NOMAXVALUE');
+    if (isTouched('seq-a','cacheSize'))  parts.push(d.cacheSize ? `  CACHE ${d.cacheSize}`    : '  NOCACHE');
     if (isTouched('seq-a','cycleYn'))    parts.push(d.cycleYn ? '  CYCLE' : '  NOCYCLE');
     if (isTouched('seq-a','orderYn'))    parts.push(d.orderYn ? '  ORDER' : '  NOORDER');
     if (!parts.length) return '';
@@ -174,6 +177,14 @@ const SequenceTab = (() => {
     Utils.checkName('시퀀스명', d.seqName ? buildSeqName(d.seqName) : '', errs);
     Utils.checkName('주 사용 테이블', d.usedForTable, errs, false);
     Utils.checkName('주 사용 컬럼', d.usedForColumn, errs, false);
+    // NOT NULL 메타 컬럼은 빈 값으로 비울 수 없다 (ORA-01407).
+    if (isTouched('seq-a','incrementBy')) {
+      if (!d.incrementBy)              errs.push('증가치(INCREMENT_BY)는 비울 수 없습니다.');
+      else if (Number(d.incrementBy) === 0) errs.push('증가치는 0일 수 없습니다.');
+    }
+    if (isTouched('seq-a','purposeCd') && !d.purposeCd) {
+      errs.push('용도(PURPOSE_CD)는 비울 수 없습니다.');
+    }
     // 아무 항목도 건드리지 않으면 감사 컬럼만 갱신하는 무의미한 HIST가 쌓인다.
     const ALTER_FIELDS = ['purposeCd','usedForTable','usedForColumn','incrementBy','minValue','maxValue','cacheSize','cycleYn','orderYn'];
     if (!ALTER_FIELDS.some(f => isTouched('seq-a', f))) {

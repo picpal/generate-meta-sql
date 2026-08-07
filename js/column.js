@@ -57,12 +57,12 @@ const ColumnTab = (() => {
       { type:'check', name:'nullableYn', id:`${prefix}-nullableYn`, label:'NULL 허용' },
       { label:'기본값', name:'defaultValue', id:`${prefix}-defaultValue`, placeholder:`'N' / 0 / SYSDATE`, hint:"(SQL 표현식 그대로 — 문자열은 작은따옴표 포함)" },
       { label:'설명', name:'description', id:`${prefix}-description`, full:true },
-      { type:'check', name:'pciYn', id:`${prefix}-pci`, label:'개인신용정보 (개인정보 포괄)', chip:'pci' },
+      { type:'check', name:'pciYn', id:`${prefix}-pciYn`, label:'개인신용정보 (개인정보 포괄)', chip:'pci' },
       { label:'PCI 분류', type:'select', name:'pciCategoryCd', id:`${prefix}-pciCategoryCd`, code:'PCI_CATEGORY' },
       { label:'민감도', type:'select', name:'sensitivityCd', id:`${prefix}-sensitivityCd`, code:'SENSITIVITY', includeEmpty:false },
-      { type:'check', name:'encryptionYn', id:`${prefix}-enc`, label:'암호화' },
+      { type:'check', name:'encryptionYn', id:`${prefix}-encryptionYn`, label:'암호화' },
       { label:'암호화 알고리즘', name:'encryptionAlg', id:`${prefix}-encryptionAlg`, placeholder:'AES256' },
-      { type:'check', name:'maskingYn', id:`${prefix}-mask`, label:'마스킹' },
+      { type:'check', name:'maskingYn', id:`${prefix}-maskingYn`, label:'마스킹' },
       { label:'마스킹 규칙', type:'select', name:'maskingRuleCd', id:`${prefix}-maskingRuleCd`, code:'MASKING_RULE' },
       { label:'보관주기(예외)', type:'select', name:'retentionPeriodCd', id:`${prefix}-retentionPeriodCd`, code:'RETENTION_PERIOD' },
       { label:'이용약관(예외)', name:'tosCd', id:`${prefix}-tosCd` },
@@ -231,6 +231,21 @@ const ColumnTab = (() => {
     if (c.dataType === 'NUMBER' && c.dataLength) {
       errs.push('NUMBER 타입에 length 입력은 무시됩니다. precision/scale로 변경하세요.');
     }
+    // 길이/정밀도/스케일만 건드리면 미조작 타입 셀렉트의 첫 값(VARCHAR2)이
+    // MODIFY에 실려 물리 타입이 통째로 바뀐다. 타입을 함께 명시하게 강제한다.
+    const dataTypeTouched = isTouched('col-mod', 'dataType');
+    const typeArgTouched  = ['dataLength','dataPrecision','dataScale']
+      .some(f => isTouched('col-mod', f));
+    if (typeArgTouched && !dataTypeTouched) {
+      errs.push('길이·정밀도·소수 자릿수를 바꾸려면 타입도 함께 선택하세요. (미선택 시 타입이 VARCHAR2로 변경됩니다)');
+    }
+    // NOT NULL 메타 컬럼은 빈 값으로 비울 수 없다 (ORA-01407).
+    if (isTouched('col-mod', 'statusCd') && !c.statusCd) {
+      errs.push('상태(STATUS_CD)는 비울 수 없습니다. 값을 선택하세요.');
+    }
+    if (isTouched('col-mod', 'sensitivityCd') && !c.sensitivityCd) {
+      errs.push('민감도(SENSITIVITY_CD)는 비울 수 없습니다. 값을 선택하세요.');
+    }
     // 아무 항목도 건드리지 않으면 감사 컬럼만 갱신하는 무의미한 HIST가 쌓인다.
     const changedFields = COL_FIELDS.filter(f => f !== 'colName' && isTouched('col-mod', f));
     if (!changedFields.length) {
@@ -246,8 +261,8 @@ const ColumnTab = (() => {
 
     // 물리 MODIFY는 사용자가 실제로 건드린 절만 포함한다.
     // (미조작 필드를 폼 기본값으로 출력하면 기존 컬럼 정의를 조용히 덮어쓴다)
-    const typeTouched = ['dataType','dataLength','dataPrecision','dataScale']
-      .some(f => isTouched('col-mod', f));
+    // 타입 절은 dataType을 명시적으로 선택했을 때만 — 위 검증이 이를 보장한다.
+    const typeTouched     = dataTypeTouched;
     const defaultTouched  = isTouched('col-mod', 'defaultValue');
     const nullableTouched = isTouched('col-mod', 'nullableYn');
 
