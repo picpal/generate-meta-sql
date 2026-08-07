@@ -55,9 +55,22 @@
 --   [배치 크기 한계 — 반드시 지킬 것]
 --     · LISTAGG는 4000 byte를 넘으면 잘리는 게 아니라 ORA-01489로 실패한다.
 --     · Oracle의 IN 목록은 최대 1,000개다. 넘으면 ORA-01795.
---     · 따라서 한 배치는 최대 1,000건, 실무상 500건 이하를 권장한다.
+--     · 따라서 한 배치는 200건 이하로 유지한다.
+--       (ID가 14자리까지 커질 수 있으므로 200 × 15byte ≈ 3,000byte로 여유를 둔다.
+--        1,000건을 채우면 IN 한계에 걸리고, LISTAGG도 4,000byte를 넘길 수 있다.)
 --       (1) 단계의 현황 SELECT로 건수를 먼저 확인하고 스키마·서비스 단위로 쪼갠다.
 --       배치마다 CHANGE_REASON 접미사를 다르게 두어 나중에 구분한다.
+--
+--     · 대상이 수천 건이라 배치 분할이 번거로우면 작업 테이블을 쓴다.
+--       IN 목록·LISTAGG 한계를 모두 우회하며 조건은 §11.0의 원칙과 동일하다.
+--
+--         CREATE TABLE TB_META_BACKFILL_TARGET (ID NUMBER(14) PRIMARY KEY);
+--         -- 후보 SELECT 결과를 그대로 적재
+--         INSERT INTO TB_META_BACKFILL_TARGET (ID)
+--         SELECT TABLE_ID FROM TB_META_TABLE WHERE ...;   -- 먼저 결과를 검토할 것
+--         -- UPDATE와 HIST 모두 아래 형태로 같은 집합을 가리킨다
+--         --   WHERE EXISTS (SELECT 1 FROM TB_META_BACKFILL_TARGET x WHERE x.ID = TABLE_ID)
+--         -- 배치 종료 후: TRUNCATE TABLE TB_META_BACKFILL_TARGET;
 --
 --   [0건 처리]
 --     LISTAGG가 0건이면 결과는 NULL이다. 그대로 두면 이전 배치의 IDS 값이

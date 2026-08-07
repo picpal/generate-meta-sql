@@ -11,6 +11,10 @@
 -- =====================================================================
 -- §10.0 사용 규약 — 실행 전 반드시 읽을 것
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 --
 -- [A] 공통 원칙
 --   1. 본 테이블 DML과 *_HIST INSERT는 항상 같은 트랜잭션. 마지막에만 COMMIT.
@@ -55,6 +59,7 @@ DEFINE TBL     = TB_MEMBER
 DEFINE COL     = MEMBER_NM
 DEFINE IDX     = IDX_MEMBER_01
 DEFINE SEQ     = SEQ_MEMBER_ID
+DEFINE IDX_IDS = NULL   -- §10.6에서 사용. 0건이면 NULL 그대로 두면 안전하다.
 
 
 -- =====================================================================
@@ -62,6 +67,10 @@ DEFINE SEQ     = SEQ_MEMBER_ID
 --   용도: SERVICE_CD / OWNER_EMP_ID / PCI_YN / 보관주기 / VIEW_YN / 상태 등
 --   물리 DDL 없음. 논리명을 바꿀 때만 COMMENT ON TABLE을 함께 실행.
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- (1) 대상 확인 — 1건이어야 한다
 SELECT TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
@@ -121,7 +130,8 @@ SELECT t.SERVICE_CD, h.SERVICE_CD, t.OWNER_EMP_ID, h.OWNER_EMP_ID,
   FROM TB_META_TABLE t
   JOIN TB_META_TABLE_HIST h ON h.TABLE_ID = t.TABLE_ID
  WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
-   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST WHERE TABLE_ID = t.TABLE_ID);
+   AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                      FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = t.TABLE_ID);
 
 -- (5) 논리명을 바꾼 경우에만 (DDL — implicit commit 발생)
 -- COMMENT ON TABLE &SCHEMA..&TBL IS '회원 기본정보';
@@ -131,6 +141,10 @@ SELECT t.SERVICE_CD, h.SERVICE_CD, t.OWNER_EMP_ID, h.OWNER_EMP_ID,
 -- §10.2 테이블 SOFT 삭제 (권장)
 --   실제 테이블·자식 메타는 유지하고 STATUS_CD만 DEPRECATED로 표기
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 UPDATE TB_META_TABLE
    SET STATUS_CD = 'DEPRECATED',
@@ -157,12 +171,35 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
   FROM TB_META_TABLE
  WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
 
--- 자식 메타도 함께 폐기 표기하려면 (선택)
+-- 자식 컬럼 메타도 함께 폐기 표기하려면 아래 두 문장을 같이 실행한다 (선택).
+-- 주석을 풀어 쓸 때 UPDATE만 실행하고 HIST를 빠뜨리지 않도록 한 쌍으로 둔다.
+--
 -- UPDATE TB_META_COLUMN
 --    SET STATUS_CD = 'DEPRECATED', UPDATED_BY = '&EMP_ID', UPDATED_AT = SYSTIMESTAMP
---  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
---                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
--- → 이 경우 §10.6의 COLUMN HIST INSERT(U)도 함께 실행할 것
+--  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
+--
+-- INSERT INTO TB_META_COLUMN_HIST (
+--     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
+--     COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+--     LOGICAL_NAME, DESCRIPTION, DATA_TYPE, DATA_LENGTH,
+--     DATA_PRECISION, DATA_SCALE, NULLABLE_YN, DEFAULT_VALUE,
+--     PK_YN, UK_YN, FK_YN, PCI_YN,
+--     PCI_CATEGORY_CD, SENSITIVITY_CD, ENCRYPTION_YN, ENCRYPTION_ALG,
+--     MASKING_YN, MASKING_RULE_CD, RETENTION_PERIOD_CD, TOS_CD,
+--     STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+--     UPDATED_BY, UPDATED_AT
+-- )
+-- SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
+--     COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+--     LOGICAL_NAME, DESCRIPTION, DATA_TYPE, DATA_LENGTH,
+--     DATA_PRECISION, DATA_SCALE, NULLABLE_YN, DEFAULT_VALUE,
+--     PK_YN, UK_YN, FK_YN, PCI_YN,
+--     PCI_CATEGORY_CD, SENSITIVITY_CD, ENCRYPTION_YN, ENCRYPTION_ALG,
+--     MASKING_YN, MASKING_RULE_CD, RETENTION_PERIOD_CD, TOS_CD,
+--     STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+--     UPDATED_BY, UPDATED_AT
+--   FROM TB_META_COLUMN
+--  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
 
 COMMIT;
 
@@ -170,8 +207,19 @@ COMMIT;
 -- =====================================================================
 -- §10.3 테이블 HARD 삭제 (표준 §6.8)
 --   ⚠️ 책임자 승인 필수. 순서를 바꾸면 ORA-02292 또는 증적 소실.
---   순서: INDEX_COLUMN → INDEX → COLUMN → TABLE → (물리 DROP)
+--   순서: (게이트) → 물리 DROP → INDEX_COLUMN → INDEX → COLUMN → TABLE → COMMIT
+--
+-- ★ 실행 순서 원칙 — 물리 DROP을 먼저 한다
+--   메타를 먼저 지우고 COMMIT한 뒤 물리 DROP이 실패하면, 실물은 남았는데
+--   그것을 정리할 근거(메타)가 사라진 상태가 된다. 복구가 가장 어렵다.
+--   반대로 물리를 먼저 지우고 메타 DELETE가 실패하면 메타가 남아 있으므로
+--   sql/04_drift_check.sql §8.2가 잡아내고 이 절차를 다시 실행하면 된다.
+--   DDL을 먼저 실행하면 ORA-02449·ORA-00054 같은 실패도 메타를 건드리기 전에 드러난다.
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- ★ (0) 사전 게이트 — 아래 두 SELECT를 먼저 실행하고 결과를 확인한다.
 --        결과가 있으면 (1-1)로 진행하지 말고 먼저 처리한다.
@@ -192,7 +240,10 @@ SELECT SEQUENCE_ID, SCHEMA_NAME, SEQUENCE_NAME, USED_FOR_TABLE, STATUS_CD
   FROM TB_META_SEQUENCE
  WHERE SCHEMA_NAME = '&SCHEMA' AND USED_FOR_TABLE = '&TBL';
 
--- (1-1) 인덱스-컬럼 매핑 HIST (D)
+-- (1) 물리 DROP (DDL — implicit commit. 게이트 확인 후 가장 먼저 실행)
+-- DROP TABLE &SCHEMA..&TBL;
+
+-- (2-1) 인덱스-컬럼 매핑 HIST (D)
 INSERT INTO TB_META_INDEX_COLUMN_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     INDEX_ID, COLUMN_POS, COLUMN_NAME, SORT_ORDER, FUNC_EXPRESSION
@@ -204,13 +255,13 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
                      WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                                         WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
 
--- (1-2) 인덱스-컬럼 매핑 DELETE
+-- (2-2) 인덱스-컬럼 매핑 DELETE
 DELETE FROM TB_META_INDEX_COLUMN
  WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX
                      WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                                         WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
 
--- (2-1) 인덱스 메타 HIST (D)
+-- (3-1) 인덱스 메타 HIST (D)
 INSERT INTO TB_META_INDEX_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     INDEX_ID, TABLE_ID, INDEX_NAME, INDEX_TYPE_CD,
@@ -227,12 +278,12 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
 
--- (2-2) 인덱스 메타 DELETE
+-- (3-2) 인덱스 메타 DELETE
 DELETE FROM TB_META_INDEX
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
 
--- (3-1) 컬럼 메타 HIST (D)
+-- (4-1) 컬럼 메타 HIST (D)
 INSERT INTO TB_META_COLUMN_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME, DESCRIPTION,
@@ -255,12 +306,12 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
 
--- (3-2) 컬럼 메타 DELETE
+-- (4-2) 컬럼 메타 DELETE
 DELETE FROM TB_META_COLUMN
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL');
 
--- (4-1) 테이블 메타 HIST (D)
+-- (5-1) 테이블 메타 HIST (D)
 INSERT INTO TB_META_TABLE_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME, DESCRIPTION,
@@ -280,20 +331,22 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
   FROM TB_META_TABLE
  WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
 
--- (4-2) 테이블 메타 DELETE
+-- (5-2) 테이블 메타 DELETE
 DELETE FROM TB_META_TABLE
  WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL';
 
 COMMIT;
 
--- (5) 물리 DROP (DDL — implicit commit. 위 COMMIT 이후에 실행)
--- DROP TABLE &SCHEMA..&TBL;
 
 
 -- =====================================================================
 -- §10.4 컬럼 추가
 --   순서: 물리 ADD → 메타 INSERT → HIST(I) → COMMIT
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- (1) 대상 테이블 메타가 있는지 먼저 확인 (없으면 메타 INSERT가 실패한다)
 SELECT TABLE_ID, STATUS_CD FROM TB_META_TABLE
@@ -372,6 +425,10 @@ COMMIT;
 --   물리 정의(타입/길이/DEFAULT/NULL)를 바꿀 때만 ALTER를 함께 실행한다.
 --   PCI 분류 등 메타만 바꿀 때는 (2)의 ALTER를 실행하지 않는다.
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- (1) 현재값 확인 — 바꾸지 않을 컬럼은 SET 절에서 지우면 그대로 유지된다
 SELECT COLUMN_NAME, COLUMN_ORDER, LOGICAL_NAME,
@@ -455,7 +512,8 @@ SELECT c.PCI_YN, h.PCI_YN, c.SENSITIVITY_CD, h.SENSITIVITY_CD,
   JOIN TB_META_COLUMN_HIST h ON h.COLUMN_ID = c.COLUMN_ID
  WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
    AND c.COLUMN_NAME = '&COL'
-   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_COLUMN_HIST WHERE COLUMN_ID = c.COLUMN_ID);
+   AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                      FROM TB_META_COLUMN_HIST z WHERE z.COLUMN_ID = c.COLUMN_ID);
 
 -- (6) 컬럼명 자체를 바꾸는 경우
 --   RENAME은 메타의 UK(TABLE_ID, COLUMN_NAME)를 건드리므로 별도 절차를 쓴다.
@@ -467,6 +525,10 @@ SELECT c.PCI_YN, h.PCI_YN, c.SENSITIVITY_CD, h.SENSITIVITY_CD,
 -- =====================================================================
 -- §10.6 컬럼 삭제
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- ── SOFT (권장) ──────────────────────────────────────────────────────
 UPDATE TB_META_COLUMN
@@ -503,9 +565,20 @@ COMMIT;
 
 -- ── HARD (승인 후) ───────────────────────────────────────────────────
 -- 순서: 인덱스 HIST → 매핑 HIST → 매핑 DELETE → 빈 인덱스 DELETE
---       → 컬럼 HIST → 컬럼 DELETE → COMMIT → 물리 DROP COLUMN
+--       물리 DROP COLUMN 을 먼저 하고, 그 다음 메타를 정리한다 (아래 원칙 참조)
+--
+-- ★ 실행 순서 원칙 — 물리 DROP을 먼저 한다
+--   메타를 먼저 지우고 COMMIT한 뒤 물리 DROP이 실패하면, 실물은 남았는데
+--   그것을 정리할 근거(메타)가 사라진 상태가 된다. 복구가 가장 어렵다.
+--   반대로 물리를 먼저 지우고 메타 DELETE가 실패하면 메타가 남아 있으므로
+--   sql/04_drift_check.sql §8.2가 잡아내고 이 절차를 다시 실행하면 된다.
+--   DDL을 먼저 실행하면 ORA-02449·ORA-00054 같은 실패도 메타를 건드리기 전에 드러난다.
 
--- (1) 이 컬럼만으로 구성된 인덱스 확인 (DROP COLUMN 시 Oracle이 자동 DROP한다)
+-- (1) 물리 DROP (DDL — implicit commit. 아래 확인 SELECT를 먼저 본 뒤 실행)
+--     실행 전에 (2)로 영향 인덱스를 확인하고, 실행 후 (3)부터 메타를 정리한다.
+-- ALTER TABLE &SCHEMA..&TBL DROP COLUMN &COL;
+
+-- (1-a) 이 컬럼만으로 구성된 인덱스 확인 (DROP COLUMN 시 Oracle이 자동 DROP한다)
 SELECT mi.INDEX_ID, mi.INDEX_NAME
   FROM TB_META_INDEX mi
  WHERE mi.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
@@ -517,7 +590,7 @@ SELECT mi.INDEX_ID, mi.INDEX_NAME
 --   Oracle은 DROP COLUMN 시 그 컬럼을 포함한 인덱스를 정리한다. 단일 컬럼
 --   인덱스는 사라지고, 복합 인덱스는 버전·상황에 따라 통째로 사라지거나
 --   남은 컬럼의 COLUMN_POSITION이 다시 매겨질 수 있다.
---   추측하지 말고 "영향 인덱스 메타를 모두 걷어낸 뒤 물리 DROP을 하고,
+--   추측하지 말고 "물리 DROP COLUMN을 먼저 하고, 영향 인덱스 메타를 모두 걷어낸 뒤,
 --   실제 카탈로그(ALL_IND_COLUMNS) 기준으로 재적재"한다. 어느 동작이든 안전하다.
 
 -- (2) 영향 인덱스 확인 — 이 컬럼을 포함한 모든 인덱스 (단일·복합 전부)
@@ -559,16 +632,21 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
    AND INDEX_ID IN (SELECT ic.INDEX_ID FROM TB_META_INDEX_COLUMN ic
                      WHERE ic.COLUMN_NAME = '&COL');
 
--- (5) 영향 인덱스 메타 삭제 (매핑 → 헤더 순서)
-DELETE FROM TB_META_INDEX_COLUMN
- WHERE INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX_COLUMN WHERE COLUMN_NAME = '&COL')
-   AND INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'));
-
-DELETE FROM TB_META_INDEX
+-- (5) 영향 인덱스 ID 고정 — 매핑을 지우고 나면 '어느 헤더가 대상이었는지'
+--     알아낼 방법이 없다. 아래 결과를 DEFINE IDX_IDS 에 붙여넣는다.
+--     ⚠️ NOT EXISTS(매핑 없음)만으로 헤더를 지우면, 원래부터 매핑이 비어 있던
+--        무관한 인덱스 헤더까지 함께 삭제된다.
+SELECT NVL(LISTAGG(TO_CHAR(INDEX_ID), ',') WITHIN GROUP (ORDER BY INDEX_ID), 'NULL') AS IDX_IDS
+  FROM TB_META_INDEX
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
-   AND NOT EXISTS (SELECT 1 FROM TB_META_INDEX_COLUMN ic WHERE ic.INDEX_ID = TB_META_INDEX.INDEX_ID);
+   AND INDEX_ID IN (SELECT INDEX_ID FROM TB_META_INDEX_COLUMN WHERE COLUMN_NAME = '&COL');
 
--- (6) 컬럼 HIST (D) — 반드시 DELETE 앞에서 실행
+-- (6) 영향 인덱스 메타 삭제 (매핑 → 헤더 순서 — FK 때문에 순서 고정)
+DELETE FROM TB_META_INDEX_COLUMN WHERE INDEX_ID IN (&IDX_IDS);
+
+DELETE FROM TB_META_INDEX       WHERE INDEX_ID IN (&IDX_IDS);
+
+-- (7) 컬럼 HIST (D) — 반드시 DELETE 앞에서 실행
 INSERT INTO TB_META_COLUMN_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
     COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
@@ -593,17 +671,15 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
    AND COLUMN_NAME = '&COL';
 
--- (7) 컬럼 메타 DELETE
+-- (8) 컬럼 메타 DELETE
 DELETE FROM TB_META_COLUMN
  WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
    AND COLUMN_NAME = '&COL';
 
 COMMIT;
 
--- (8) 물리 DROP (DDL — 위 COMMIT 이후에 실행)
--- ALTER TABLE &SCHEMA..&TBL DROP COLUMN &COL;
 
--- (9) 인덱스 메타 재적재 — (8) 실행 후, 실제 카탈로그 기준으로 살아남은 인덱스를 다시 등록
+-- (9) 인덱스 메타 재적재 — 물리 DROP 이후, 실제 카탈로그 기준으로 살아남은 인덱스를 다시 등록
 --     아래로 실물을 확인한 뒤 §10.7 '등록'의 (2)~(5)를 인덱스마다 실행한다
 --     (물리 DDL 블록은 실행하지 않는다 — 인덱스는 이미 존재하거나 사라졌다).
 SELECT i.INDEX_NAME, ic.COLUMN_NAME, ic.COLUMN_POSITION, ic.DESCEND
@@ -620,6 +696,10 @@ SELECT i.INDEX_NAME, ic.COLUMN_NAME, ic.COLUMN_POSITION, ic.DESCEND
 -- =====================================================================
 -- §10.7 인덱스 등록 / 삭제
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- ── 등록 ─────────────────────────────────────────────────────────────
 -- (1) 물리 인덱스 생성 (DDL — implicit commit)
@@ -682,6 +762,10 @@ COMMIT;
 
 -- ── 삭제 ─────────────────────────────────────────────────────────────
 -- (1) 대상 확인 — 정확히 1건이어야 한다 (INDEX_NAME만으로 지우지 말 것)
+--     확인 후 (1-a) 물리 DROP을 먼저 실행하고, 그 다음 메타를 정리한다.
+-- (1-a) 물리 DROP (DDL — implicit commit)
+-- DROP INDEX &SCHEMA..&IDX;
+
 SELECT mi.INDEX_ID, mt.SCHEMA_NAME, mt.TABLE_NAME, mi.INDEX_NAME, mi.STATUS_CD
   FROM TB_META_INDEX mi
   JOIN TB_META_TABLE mt ON mt.TABLE_ID = mi.TABLE_ID
@@ -734,13 +818,16 @@ DELETE FROM TB_META_INDEX
 
 COMMIT;
 
--- (6) 물리 DROP (DDL — 위 COMMIT 이후에 실행)
--- DROP INDEX &SCHEMA..&IDX;
+
 
 
 -- =====================================================================
 -- §10.8 시퀀스 등록 / 변경 / 삭제
 -- =====================================================================
+
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
 
 -- ── (1) 등록 ─────────────────────────────────────────────────────────
 -- CREATE SEQUENCE &SCHEMA..&SEQ START WITH 1 INCREMENT BY 1 CACHE 20 NOORDER NOCYCLE;
@@ -830,6 +917,8 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'U', SYSTIMESTAMP, '&EMP_ID', '&REASON',
 COMMIT;
 
 -- ── (3) 삭제 ─────────────────────────────────────────────────────────
+-- 물리 DROP을 먼저 실행한다 (실패 시 메타가 남아 drift로 잡히는 편이 안전하다)
+-- DROP SEQUENCE &SCHEMA..&SEQ;
 -- HIST 적재 (D, 삭제 전 스냅샷) — 반드시 DELETE 앞에서 실행
 INSERT INTO TB_META_SEQUENCE_HIST (
     HIST_ID, HIST_TYPE, HIST_AT, HIST_BY, CHANGE_REASON,
@@ -850,7 +939,6 @@ SELECT SEQ_META_HIST_ID.NEXTVAL, 'D', SYSTIMESTAMP, '&EMP_ID', '&REASON',
 DELETE FROM TB_META_SEQUENCE
  WHERE SCHEMA_NAME = '&SCHEMA' AND SEQUENCE_NAME = '&SEQ';
 COMMIT;
--- DROP SEQUENCE &SCHEMA..&SEQ;
 
 
 -- =====================================================================
@@ -865,15 +953,19 @@ COMMIT;
 --   단 TABLE_ID는 새 값이 된다. 예전 TABLE_ID를 참조하던 리포트를 함께 수정할 것.
 -- =====================================================================
 
+-- ↓ 이 § 만 복사해 실행하는 경우에도 아래 두 줄을 함께 가져간다 (필수)
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+WHENEVER OSERROR  EXIT FAILURE ROLLBACK
+
 -- (1) 백업
 -- CREATE TABLE BAK_META_TABLE_20260807  AS SELECT * FROM TB_META_TABLE  WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL';
 -- CREATE TABLE BAK_META_COLUMN_20260807 AS SELECT * FROM TB_META_COLUMN WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
 -- CREATE TABLE BAK_META_INDEX_20260807  AS SELECT * FROM TB_META_INDEX  WHERE TABLE_ID=(SELECT TABLE_ID FROM TB_META_TABLE WHERE SCHEMA_NAME='&SCHEMA' AND TABLE_NAME='&TBL');
 
 -- (2) 옛 메타 정리
---     §10.3의 (1-1) ~ (4-2) 를 순서대로 실행한 뒤 COMMIT.
---     ★ (5) 물리 DROP은 실행하지 않는다 — 새로 만든 테이블이 삭제된다.
---     ★ (0-2) 연결 시퀀스 점검 결과를 반드시 확인한다.
+--     §10.3의 (2-1) ~ (5-2) 를 순서대로 실행한 뒤 COMMIT.
+--     ★ (1) 물리 DROP은 실행하지 않는다 — 새로 만든 테이블이 삭제된다.
+--     ★ (0-1)(0-2) 게이트 결과를 반드시 확인한다.
 
 -- (3) 정리 확인 — 0건이어야 한다
 SELECT COUNT(*) AS REMAIN FROM TB_META_TABLE

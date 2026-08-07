@@ -201,7 +201,8 @@ SELECT t.SCHEMA_NAME, t.TABLE_NAME,
   FROM TB_META_TABLE t
   JOIN TB_META_TABLE_HIST h ON h.TABLE_ID = t.TABLE_ID
  WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
-   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST WHERE TABLE_ID = t.TABLE_ID)
+   AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                      FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = t.TABLE_ID)
 ;
 
 -- §5.8.2 컬럼 — 본 테이블 값과 최신 HIST 스냅샷이 같은지
@@ -219,7 +220,8 @@ SELECT c.COLUMN_NAME,
   JOIN TB_META_COLUMN_HIST h ON h.COLUMN_ID = c.COLUMN_ID
  WHERE t.SCHEMA_NAME = '&SCHEMA' AND t.TABLE_NAME = '&TBL'
    AND c.COLUMN_NAME = '&COL'
-   AND h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_COLUMN_HIST WHERE COLUMN_ID = c.COLUMN_ID)
+   AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                      FROM TB_META_COLUMN_HIST z WHERE z.COLUMN_ID = c.COLUMN_ID)
 ;
 
 -- §5.8.3 배치 단위 — 이번 CHANGE_REASON으로 남은 이력 건수
@@ -288,127 +290,136 @@ SELECT 'SEQUENCE', HIST_ID, HIST_TYPE, HIST_BY, CHANGE_REASON, HIST_AT
 ;
 
 
+
 -- =====================================================================
 -- §5.8.6 전체 스냅샷 일치 검증 (§5.8.1/5.8.2의 정밀 버전)
 --   §5.8.1·§5.8.2는 자주 보는 컬럼만 나열하므로 LOGICAL_NAME·DESCRIPTION·
 --   암호화·보관주기 등이 어긋나도 통과한 것처럼 보인다.
 --   아래는 전 컬럼을 MINUS 양방향으로 비교한다. 결과 0건이면 완전 일치.
+--
+--   ⚠️ '최신 HIST'는 MAX(HIST_ID)가 아니라 HIST_AT 우선으로 고른다.
+--      SEQ_META_HIST_ID가 NOORDER라 RAC에서는 가장 큰 ID가 시간상 최신이라는
+--      보장이 없다(sql/01_meta_ddl.sql §6.7).
 -- =====================================================================
 
--- §5.8.6-A TB_META_TABLE 전체 스냅샷 일치 (부분 컬럼이 아닌 전 컬럼 비교)
---   기대: 0건. 행이 나오면 그 컬럼이 본↔HIST 간 다르다는 뜻이다.
+-- §5.8.6-A 테이블 — 전 컬럼 양방향 비교
+--   기대: 0건. 행이 나오면 그 방향에만 있는 값이 있다는 뜻이다.
 SELECT 'MAIN_ONLY' AS SIDE, x.* FROM (
-    SELECT TABLE_ID,
-           SCHEMA_NAME,
-           TABLE_NAME,
-           LOGICAL_NAME,
-           DESCRIPTION,
-           VIEW_YN,
-           SERVICE_CD,
-           OWNER_EMP_ID,
-           SECONDARY_EMP_ID,
-           KEY_TABLE_YN,
-           ISOLATION_YN,
-           ISOLATION_LEVEL_CD,
-           PCI_YN,
-           RETENTION_PERIOD_CD,
-           RETENTION_BASIS,
-           TOS_CD,
-           STATUS_CD,
-           REMARK,
-           CREATED_BY,
-           CREATED_AT,
-           UPDATED_BY,
-           UPDATED_AT
+    SELECT TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
+           DESCRIPTION, VIEW_YN, SERVICE_CD, OWNER_EMP_ID,
+           SECONDARY_EMP_ID, KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+           PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+           STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+           UPDATED_BY, UPDATED_AT
       FROM TB_META_TABLE
      WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'
     MINUS
-    SELECT TABLE_ID,
-           SCHEMA_NAME,
-           TABLE_NAME,
-           LOGICAL_NAME,
-           DESCRIPTION,
-           VIEW_YN,
-           SERVICE_CD,
-           OWNER_EMP_ID,
-           SECONDARY_EMP_ID,
-           KEY_TABLE_YN,
-           ISOLATION_YN,
-           ISOLATION_LEVEL_CD,
-           PCI_YN,
-           RETENTION_PERIOD_CD,
-           RETENTION_BASIS,
-           TOS_CD,
-           STATUS_CD,
-           REMARK,
-           CREATED_BY,
-           CREATED_AT,
-           UPDATED_BY,
-           UPDATED_AT
+    SELECT h.TABLE_ID, h.SCHEMA_NAME, h.TABLE_NAME, h.LOGICAL_NAME,
+           h.DESCRIPTION, h.VIEW_YN, h.SERVICE_CD, h.OWNER_EMP_ID,
+           h.SECONDARY_EMP_ID, h.KEY_TABLE_YN, h.ISOLATION_YN, h.ISOLATION_LEVEL_CD,
+           h.PCI_YN, h.RETENTION_PERIOD_CD, h.RETENTION_BASIS, h.TOS_CD,
+           h.STATUS_CD, h.REMARK, h.CREATED_BY, h.CREATED_AT,
+           h.UPDATED_BY, h.UPDATED_AT
       FROM TB_META_TABLE_HIST h
-     WHERE h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
+     WHERE h.SCHEMA_NAME = '&SCHEMA' AND h.TABLE_NAME = '&TBL'
+       AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                  FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
 ) x
 UNION ALL
 SELECT 'HIST_ONLY', y.* FROM (
-    SELECT TABLE_ID,
-           SCHEMA_NAME,
-           TABLE_NAME,
-           LOGICAL_NAME,
-           DESCRIPTION,
-           VIEW_YN,
-           SERVICE_CD,
-           OWNER_EMP_ID,
-           SECONDARY_EMP_ID,
-           KEY_TABLE_YN,
-           ISOLATION_YN,
-           ISOLATION_LEVEL_CD,
-           PCI_YN,
-           RETENTION_PERIOD_CD,
-           RETENTION_BASIS,
-           TOS_CD,
-           STATUS_CD,
-           REMARK,
-           CREATED_BY,
-           CREATED_AT,
-           UPDATED_BY,
-           UPDATED_AT
+    SELECT h.TABLE_ID, h.SCHEMA_NAME, h.TABLE_NAME, h.LOGICAL_NAME,
+           h.DESCRIPTION, h.VIEW_YN, h.SERVICE_CD, h.OWNER_EMP_ID,
+           h.SECONDARY_EMP_ID, h.KEY_TABLE_YN, h.ISOLATION_YN, h.ISOLATION_LEVEL_CD,
+           h.PCI_YN, h.RETENTION_PERIOD_CD, h.RETENTION_BASIS, h.TOS_CD,
+           h.STATUS_CD, h.REMARK, h.CREATED_BY, h.CREATED_AT,
+           h.UPDATED_BY, h.UPDATED_AT
       FROM TB_META_TABLE_HIST h
-     WHERE h.HIST_ID = (SELECT MAX(HIST_ID) FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
+     WHERE h.SCHEMA_NAME = '&SCHEMA' AND h.TABLE_NAME = '&TBL'
+       AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                  FROM TB_META_TABLE_HIST z WHERE z.TABLE_ID = h.TABLE_ID)
     MINUS
-    SELECT TABLE_ID,
-           SCHEMA_NAME,
-           TABLE_NAME,
-           LOGICAL_NAME,
-           DESCRIPTION,
-           VIEW_YN,
-           SERVICE_CD,
-           OWNER_EMP_ID,
-           SECONDARY_EMP_ID,
-           KEY_TABLE_YN,
-           ISOLATION_YN,
-           ISOLATION_LEVEL_CD,
-           PCI_YN,
-           RETENTION_PERIOD_CD,
-           RETENTION_BASIS,
-           TOS_CD,
-           STATUS_CD,
-           REMARK,
-           CREATED_BY,
-           CREATED_AT,
-           UPDATED_BY,
-           UPDATED_AT
+    SELECT TABLE_ID, SCHEMA_NAME, TABLE_NAME, LOGICAL_NAME,
+           DESCRIPTION, VIEW_YN, SERVICE_CD, OWNER_EMP_ID,
+           SECONDARY_EMP_ID, KEY_TABLE_YN, ISOLATION_YN, ISOLATION_LEVEL_CD,
+           PCI_YN, RETENTION_PERIOD_CD, RETENTION_BASIS, TOS_CD,
+           STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+           UPDATED_BY, UPDATED_AT
       FROM TB_META_TABLE
      WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL'
 ) y
 ;
 
--- §5.8.7 HARD 삭제 검증 — 본 행이 없으므로 §5.8.6은 0건 비교가 무의미하다.
---   삭제 직후에는 최신 HIST가 'D'이고 본 테이블에 행이 없어야 정상이다.
+-- §5.8.6-B 컬럼 — 전 컬럼 양방향 비교
+--   기대: 0건. 행이 나오면 그 방향에만 있는 값이 있다는 뜻이다.
+SELECT 'MAIN_ONLY' AS SIDE, x.* FROM (
+    SELECT COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+           LOGICAL_NAME, DESCRIPTION, DATA_TYPE, DATA_LENGTH,
+           DATA_PRECISION, DATA_SCALE, NULLABLE_YN, DEFAULT_VALUE,
+           PK_YN, UK_YN, FK_YN, PCI_YN,
+           PCI_CATEGORY_CD, SENSITIVITY_CD, ENCRYPTION_YN, ENCRYPTION_ALG,
+           MASKING_YN, MASKING_RULE_CD, RETENTION_PERIOD_CD, TOS_CD,
+           STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+           UPDATED_BY, UPDATED_AT
+      FROM TB_META_COLUMN
+     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+       AND COLUMN_NAME = '&COL'
+    MINUS
+    SELECT h.COLUMN_ID, h.TABLE_ID, h.COLUMN_NAME, h.COLUMN_ORDER,
+           h.LOGICAL_NAME, h.DESCRIPTION, h.DATA_TYPE, h.DATA_LENGTH,
+           h.DATA_PRECISION, h.DATA_SCALE, h.NULLABLE_YN, h.DEFAULT_VALUE,
+           h.PK_YN, h.UK_YN, h.FK_YN, h.PCI_YN,
+           h.PCI_CATEGORY_CD, h.SENSITIVITY_CD, h.ENCRYPTION_YN, h.ENCRYPTION_ALG,
+           h.MASKING_YN, h.MASKING_RULE_CD, h.RETENTION_PERIOD_CD, h.TOS_CD,
+           h.STATUS_CD, h.REMARK, h.CREATED_BY, h.CREATED_AT,
+           h.UPDATED_BY, h.UPDATED_AT
+      FROM TB_META_COLUMN_HIST h
+     WHERE h.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                       WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+       AND h.COLUMN_NAME = '&COL'
+       AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                  FROM TB_META_COLUMN_HIST z WHERE z.COLUMN_ID = h.COLUMN_ID)
+) x
+UNION ALL
+SELECT 'HIST_ONLY', y.* FROM (
+    SELECT h.COLUMN_ID, h.TABLE_ID, h.COLUMN_NAME, h.COLUMN_ORDER,
+           h.LOGICAL_NAME, h.DESCRIPTION, h.DATA_TYPE, h.DATA_LENGTH,
+           h.DATA_PRECISION, h.DATA_SCALE, h.NULLABLE_YN, h.DEFAULT_VALUE,
+           h.PK_YN, h.UK_YN, h.FK_YN, h.PCI_YN,
+           h.PCI_CATEGORY_CD, h.SENSITIVITY_CD, h.ENCRYPTION_YN, h.ENCRYPTION_ALG,
+           h.MASKING_YN, h.MASKING_RULE_CD, h.RETENTION_PERIOD_CD, h.TOS_CD,
+           h.STATUS_CD, h.REMARK, h.CREATED_BY, h.CREATED_AT,
+           h.UPDATED_BY, h.UPDATED_AT
+      FROM TB_META_COLUMN_HIST h
+     WHERE h.TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                       WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+       AND h.COLUMN_NAME = '&COL'
+       AND h.HIST_ID = (SELECT MAX(z.HIST_ID) KEEP (DENSE_RANK LAST ORDER BY z.HIST_AT, z.HIST_ID)
+                  FROM TB_META_COLUMN_HIST z WHERE z.COLUMN_ID = h.COLUMN_ID)
+    MINUS
+    SELECT COLUMN_ID, TABLE_ID, COLUMN_NAME, COLUMN_ORDER,
+           LOGICAL_NAME, DESCRIPTION, DATA_TYPE, DATA_LENGTH,
+           DATA_PRECISION, DATA_SCALE, NULLABLE_YN, DEFAULT_VALUE,
+           PK_YN, UK_YN, FK_YN, PCI_YN,
+           PCI_CATEGORY_CD, SENSITIVITY_CD, ENCRYPTION_YN, ENCRYPTION_ALG,
+           MASKING_YN, MASKING_RULE_CD, RETENTION_PERIOD_CD, TOS_CD,
+           STATUS_CD, REMARK, CREATED_BY, CREATED_AT,
+           UPDATED_BY, UPDATED_AT
+      FROM TB_META_COLUMN
+     WHERE TABLE_ID = (SELECT TABLE_ID FROM TB_META_TABLE
+                     WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')
+       AND COLUMN_NAME = '&COL'
+) y
+;
+
+-- =====================================================================
+-- §5.8.7 HARD 삭제 검증 — 본 행이 없으므로 §5.8.6은 의미가 없다.
+--   삭제 직후에는 본 테이블에 행이 없고 최신 HIST가 'D'여야 정상이다.
+-- =====================================================================
 SELECT (SELECT COUNT(*) FROM TB_META_TABLE
          WHERE SCHEMA_NAME = '&SCHEMA' AND TABLE_NAME = '&TBL')          AS MAIN_REMAIN,
-       (SELECT MAX(HIST_TYPE) KEEP (DENSE_RANK LAST ORDER BY HIST_ID)
+       (SELECT MAX(h.HIST_TYPE) KEEP (DENSE_RANK LAST ORDER BY h.HIST_AT, h.HIST_ID)
           FROM TB_META_TABLE_HIST h
-          JOIN (SELECT '&SCHEMA' AS S, '&TBL' AS T FROM DUAL) k
-            ON h.SCHEMA_NAME = k.S AND h.TABLE_NAME = k.T)               AS LAST_HIST_TYPE
+         WHERE h.SCHEMA_NAME = '&SCHEMA' AND h.TABLE_NAME = '&TBL')      AS LAST_HIST_TYPE
   FROM DUAL;
 --   기대: MAIN_REMAIN = 0, LAST_HIST_TYPE = 'D'
